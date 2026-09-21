@@ -2,7 +2,6 @@ services:
   - type: web
     name: watchparty-signaler
     env: docker
-    rootDir: signaler
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:

@@ -21,7 +21,7 @@ comparte la URL y controla reproducción, pausa y posición por WebRTC.
 docs/                        Toda la documentación mantenida e histórica
 signaler/
   Dockerfile                 Servidor Weron para Render
-render.yaml                  Blueprint del despliegue en Render
+signaler/render.yaml         Blueprint del despliegue en Render
 watchparty/                  Aplicación completa de escritorio
   app.go                     Métodos Wails y ciclo de vida
   internal/p2p/              Salas y autorización de mensajes

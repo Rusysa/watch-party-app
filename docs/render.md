@@ -4,8 +4,8 @@
 
 El directorio [`signaler/`](../signaler/) contiene únicamente el despliegue del
 **servidor Weron**. La aplicación de escritorio está en
-[`watchparty/`](../watchparty/). El archivo [`render.yaml`](../render.yaml) es el
-Blueprint que Render utiliza para construir el servicio Docker.
+[`watchparty/`](../watchparty/). El archivo [`signaler/render.yaml`](../signaler/render.yaml)
+es el Blueprint que Render utiliza para construir el servicio Docker.
 
 El signaler permite descubrir participantes e intercambiar señalización WebRTC;
 el vídeo se descarga desde el origen por cada participante y los mensajes de
@@ -15,9 +15,9 @@ reproducción circulan por los canales de datos P2P.
 
 1. Abre [Render](https://render.com/) y crea un **Blueprint**.
 2. Selecciona el repositorio `Rusysa/watch-party-app`.
-3. Render leerá `render.yaml` desde la raíz del repositorio. El servicio usa
-   `rootDir: signaler`, por lo que el contexto y `Dockerfile` corresponden a esa
-   carpeta.
+3. Indica **`signaler/render.yaml`** como ruta del Blueprint. El Blueprint está
+   dentro de la carpeta del servicio, por lo que `Dockerfile` se resuelve como
+   `signaler/Dockerfile`.
 4. Pulsa **Apply**. Render asignará el puerto mediante `PORT`; Weron escucha en
    todas las interfaces con ese puerto.
 5. Genera o consulta el dominio público del servicio. Si Render muestra
