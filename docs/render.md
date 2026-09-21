@@ -15,9 +15,9 @@ reproducción circulan por los canales de datos P2P.
 
 1. Abre [Render](https://render.com/) y crea un **Blueprint**.
 2. Selecciona el repositorio `Rusysa/watch-party-app`.
-3. Indica **`signaler/render.yaml`** como ruta del Blueprint. El Blueprint está
-   dentro de la carpeta del servicio, por lo que `Dockerfile` se resuelve como
-   `signaler/Dockerfile`.
+3. Indica **`signaler/render.yaml`** como ruta del Blueprint. Render evalúa las
+   rutas de Docker desde la raíz del repositorio; por eso el Blueprint usa
+   explícitamente `dockerfilePath: ./signaler/Dockerfile`.
 4. Pulsa **Apply**. Render asignará el puerto mediante `PORT`; Weron escucha en
    todas las interfaces con ese puerto.
 5. Genera o consulta el dominio público del servicio. Si Render muestra

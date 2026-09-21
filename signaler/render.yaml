@@ -2,7 +2,8 @@ services:
   - type: web
     name: watchparty-signaler
     env: docker
-    dockerfilePath: ./Dockerfile
+    # Render evalúa esta ruta desde la raíz del repositorio.
+    dockerfilePath: ./signaler/Dockerfile
     plan: free
     envVars:
       - key: PORT
