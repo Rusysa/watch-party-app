@@ -25,7 +25,7 @@ externa ni una certificación de ausencia de vulnerabilidades.
 | Superficie de ejecución de mpv | Se preserva `--` antes de la URL y se desactivan configuración, scripts automáticos y el hook `ytdl`. El proceso se espera y sus eventos se cierran al finalizar. |
 | Imagen de signaler mutable y ejecución privilegiada | Imagen Weron v0.3.0 fijada por digest de GHCR, UID/GID sin privilegios y `exec` para propagar señales. Esto es endurecimiento, no una auditoría del contenido de la imagen. |
 | Nonces AES-GCM de DTLS vulnerables (CVE-2026-26014) | Sustituido el adaptador cliente de Weron por `internal/transport`, Pion WebRTC v4.2.20 y DTLS v3.1.9. Eliminadas las ramas WebRTC v3 y DTLS v2 del grafo de dependencias del cliente. |
-| Healthcheck que impedía un despliegue correcto en Railway | Retirado el GET `/` como healthcheck: el contenedor real devuelve 501 sin API de gestión. Verificación mediante conexión WebSocket e intercambio real entre clientes. |
+| Healthcheck que impedía un despliegue correcto en Render | Retirado el GET `/` como healthcheck: el contenedor real devuelve 501 sin API de gestión. Render debe dejar vacío el healthcheck; la verificación se realiza mediante conexión WebSocket e intercambio real entre clientes. |
 
 Además, se corrigió la detección de mpv en Linux (antes intentaba utilizar
 `mpv.exe`) y se sincroniza el rol de la UI al recibir una transferencia.
@@ -103,7 +103,7 @@ El comando termina correctamente con código 0; no se han añadido exclusiones.
    usuario; los permisos del pipe los crea mpv.
 6. **El contenedor del signaler se probó localmente con Podman**, incluido un
    intercambio entre dos clientes WebRTC. No se escaneó su sistema base ni se
-   desplegó en Railway durante esta revisión. La auditoría Go corresponde al
+   desplegó en Render durante esta revisión. La auditoría Go corresponde al
    cliente, no al conjunto de componentes empaquetados en la imagen Weron.
 
 ## Verificación realizada

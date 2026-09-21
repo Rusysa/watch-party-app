@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: watchparty-signaler
+    env: docker
+    rootDir: signaler
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PORT
+        value: "15325"

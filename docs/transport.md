@@ -12,7 +12,7 @@ Cliente Wails                         Cliente Wails
           |                                      |
           +---------- servidor del vídeo --------+
 
-Los clientes consultan STUN y usan el signaler Weron de Railway
+Los clientes consultan STUN y usan el signaler Weron de Render
 para descubrirse e intercambiar SDP antes de establecer WebRTC.
 ```
 
@@ -126,7 +126,7 @@ la capa de sala, no al algoritmo que elige quién genera la oferta SDP.
   o cifrados con otra contraseña.
 - Cancelación sin bloqueo y errores iniciales sin filtración de credenciales.
 - Integración opcional con un contenedor Weron real mediante
-  `WATCHPARTY_TEST_SIGNALER_URL`; véase [Railway](railway.md).
+  `WATCHPARTY_TEST_SIGNALER_URL`; véase [Render](render.md).
 
 Los tests locales no dependen de servidores STUN públicos y no validan por sí
 solos conectividad entre redes NAT distintas. Las auditorías y limitaciones

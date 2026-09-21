@@ -91,6 +91,6 @@ temp/
 *.swp
 *.swo
 
-# ─── Railway deployment (keep config files) ──────────────────
-# railway.toml IS committed intentionally
+# ─── Render deployment (keep config files) ────────────────────
+# render.yaml IS committed intentionally
 # Add any generated deployment artifacts here if needed

@@ -133,7 +133,7 @@ El detector de carreras necesita CGO y un compilador C; en Windows puede requeri
 MinGW-w64 para esa comprobación. `go test ./...` funciona sin el detector.
 
 Las pruebas de `internal/transport` establecen conexiones WebRTC reales sobre
-loopback con un relay WebSocket de prueba. No necesitan Google STUN, Railway,
+loopback con un relay WebSocket de prueba. No necesitan Google STUN, Render,
 mpv ni una interfaz gráfica. Incluyen intercambio bidireccional, malla de tres
 participantes, reconexión y validación del formato cifrado de señalización.
 

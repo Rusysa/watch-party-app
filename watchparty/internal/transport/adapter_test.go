@@ -249,7 +249,7 @@ func TestOpenFailureAndCancellation(t *testing.T) {
 }
 
 // Optional integration against the actual pinned Weron container. The normal
-// suite remains offline; see docs/railway.md for running this check locally.
+// suite remains offline; see docs/render.md for running this check locally.
 func TestWeronSignaler(t *testing.T) {
 	address := os.Getenv("WATCHPARTY_TEST_SIGNALER_URL")
 	if address == "" {

@@ -148,7 +148,7 @@ original necesita ceder el control (se ausenta, tiene mala conexión, etc.).
 ### 5.3 Signaling server: weron auto-hosteado (AGPL aceptado)
 Se decide usar **weron completo** (servidor de señalización + librería cliente Go),
 pero **auto-hosteado** en vez de depender del servidor público
-(`wss://weron.up.railway.app/`). Esto resuelve los problemas de infraestructura
+(`wss://tu-servicio.onrender.com/`). Esto resuelve los problemas de infraestructura
 identificados inicialmente:
 
 - **SLA/disponibilidad:** resuelto — control total sobre el uptime del servidor.
