@@ -42,7 +42,7 @@ rutas de estas guías indican siempre desde qué directorio deben ejecutarse.
 2. Configura la misma URL `wss://tu-servicio.onrender.com/` en todos los clientes,
    en «Configuración del signaler». Sigue la [guía de Render](render.md) para
    obtener tu dominio real.
-3. Crea una sala con contraseña larga y aleatoria: el backend admite **12–256
+3. Crea una sala con contraseña de al menos 4 caracteres: el backend admite **4–256
    bytes UTF-8**. Comparte el código de seis caracteres y la contraseña.
 4. Los invitados introducen ambos datos en «Unirse a sala».
 5. El host pega el enlace directo HTTP/HTTPS y pulsa «Iniciar Transmisión».

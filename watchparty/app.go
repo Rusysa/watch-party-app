@@ -75,7 +75,7 @@ func NewApp() *App {
 	}
 	signalerURL := strings.TrimSpace(os.Getenv("WATCHPARTY_SIGNALER_URL"))
 	if signalerURL == "" {
-		signalerURL = "ws://127.0.0.1:15325/"
+		signalerURL = "wss://watchparty-signaler.onrender.com/"
 	}
 	return &App{
 		mpvManager:  mgr,
@@ -117,8 +117,8 @@ func (a *App) CheckAndInstallMPV() error {
 // CreateRoom creates a new watch party room as host.
 // Returns the room code to share with peers.
 func (a *App) CreateRoom(password string) (string, error) {
-	if len(password) < 12 || len(password) > 256 || strings.TrimSpace(password) == "" {
-		return "", fmt.Errorf("password must contain 12 to 256 bytes")
+	if len(password) < 4 || len(password) > 256 || strings.TrimSpace(password) == "" {
+		return "", fmt.Errorf("password must contain 4 to 256 bytes")
 	}
 
 	roomID, err := generateRoomCode()
@@ -140,8 +140,8 @@ func (a *App) JoinRoom(roomID, password string) error {
 	if len(roomID) != 6 || strings.Trim(roomID, roomCodeChars) != "" {
 		return fmt.Errorf("invalid room code")
 	}
-	if len(password) < 12 || len(password) > 256 || strings.TrimSpace(password) == "" {
-		return fmt.Errorf("password must contain 12 to 256 bytes")
+	if len(password) < 4 || len(password) > 256 || strings.TrimSpace(password) == "" {
+		return fmt.Errorf("password must contain 4 to 256 bytes")
 	}
 
 	// Join without URL (will receive from host)

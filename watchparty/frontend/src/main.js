@@ -320,7 +320,7 @@ function buildUI() {
 
           <div class="form-group">
             <label>Contraseña de la sala</label>
-            <input type="password" id="input-host-password" placeholder="Mínimo 12 caracteres" />
+            <input type="password" id="input-host-password" placeholder="Mínimo 4 caracteres" />
           </div>
           <button class="btn btn-primary" id="btn-create-room">
             🏠 Crear sala
@@ -490,7 +490,7 @@ function wireHandlers() {
   $('#btn-create-room').addEventListener('click', async () => {
     const pass = $('#input-host-password').value;
 
-    if (pass.length < 12) { toast('La contraseña debe tener al menos 12 caracteres', 'error'); return; }
+    if (pass.length < 4) { toast('La contraseña debe tener al menos 4 caracteres', 'error'); return; }
 
     const btn = $('#btn-create-room');
     setLoading(btn, true);
@@ -513,7 +513,7 @@ function wireHandlers() {
     const pass = $('#input-join-password').value;
 
     if (code.length < 4) { toast('Ingresa el código de sala', 'error'); return; }
-    if (!pass) { toast('Ingresa la contraseña', 'error'); return; }
+    if (pass.length < 4) { toast('La contraseña debe tener al menos 4 caracteres', 'error'); return; }
 
     const btn = $('#btn-join-room');
     setLoading(btn, true);

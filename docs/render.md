@@ -44,7 +44,7 @@ efímeras y no hay volumen persistente.
 | `REDIS_URL` | Render | No definida; Weron usa broker en memoria. |
 | `WATCHPARTY_SIGNALER_URL` | Equipo cliente | URL inicial opcional; no se envía al contenedor. |
 
-El cliente usa `ws://127.0.0.1:15325/` si no se establece
+El cliente usa `wss://watchparty-signaler.onrender.com/` si no se establece
 `WATCHPARTY_SIGNALER_URL`. Puede cambiarse desde la interfaz para nuevas salas;
 esa selección no persiste entre ejecuciones. Para fijarla al iniciar:
 
