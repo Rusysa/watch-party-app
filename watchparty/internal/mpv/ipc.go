@@ -18,11 +18,12 @@ import (
 
 // Event represents an event or property change received from mpv.
 type Event struct {
-	Event string      `json:"event"`
-	Name  string      `json:"name"`
-	Data  interface{} `json:"data"`
-	ID    int         `json:"id"`
-	Error string      `json:"error"`
+	Event  string      `json:"event"`
+	Name   string      `json:"name"`
+	Data   interface{} `json:"data"`
+	Reason string      `json:"reason"`
+	ID     int         `json:"id"`
+	Error  string      `json:"error"`
 }
 
 // ipcRequest is the JSON structure sent to mpv.
@@ -38,6 +39,7 @@ type ipcResponse struct {
 	RequestID int         `json:"request_id"`
 	Event     string      `json:"event"`
 	Name      string      `json:"name"`
+	Reason    string      `json:"reason"`
 }
 
 // Client manages a connection to a running mpv instance.
@@ -302,9 +304,10 @@ func (c *Client) readLoop(ctx context.Context) {
 		// It's an event — send to Events channel
 		if resp.Event != "" {
 			evt := Event{
-				Event: resp.Event,
-				Name:  resp.Name,
-				Data:  resp.Data,
+				Event:  resp.Event,
+				Name:   resp.Name,
+				Data:   resp.Data,
+				Reason: resp.Reason,
 			}
 			select {
 			case c.Events <- evt:

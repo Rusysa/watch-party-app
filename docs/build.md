@@ -98,13 +98,13 @@ Windows ARM64 no está cubierto por el instalador automático de mpv.
 - **Linux:** se busca `mpv` en `PATH`. No se descarga un ejecutable de Windows.
 - **Windows amd64:** si falta `%APPDATA%\WatchParty\bin\mpv.exe`, se descarga una
   compilación x86_64 de `shinchiro/mpv-winbuild-cmake` por HTTPS. Se verifica el
-  SHA-256 publicado por GitHub y se instala mediante archivo temporal y renombrado.
+   SHA-256 publicado por GitHub; se extraen `mpv.exe` y las DLL de ejecución
+   necesarias mediante archivos temporales y renombrado.
   Una release sin digest válido, vacía o demasiado grande se rechaza.
 - mpv se ejecuta sin configuración de usuario, scripts automáticos ni `ytdl`;
   utiliza enlaces directos. Las descargas tienen un límite de cinco minutos.
-- Un `mpv.exe` ya instalado se reutiliza; no hay actualización automática ni
-  verificación retrospectiva del digest de ese archivo. Para sustituirlo, cierra
-  la aplicación, elimina la copia instalada y vuelve a abrirla.
+- Una instalación creada por versiones anteriores, que solo extraían `mpv.exe`,
+  se reemplaza automáticamente en el siguiente inicio para añadir sus DLL.
 
 ## Desarrollo y comprobaciones
 

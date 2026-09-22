@@ -270,6 +270,14 @@ function setupEvents() {
     updateRoomUI();
   });
 
+  EventsOn('playback:loaded', () => {
+    toast('🎬 mpv cargó el vídeo', 'success');
+  });
+
+  EventsOn('playback:error', (message) => {
+    toast(`Error de reproducción: ${message}. Comprueba que el enlace funcione directamente en mpv.`, 'error', 8000);
+  });
+
   EventsOn('room:left', () => {
     state.inRoom = false;
     state.peers = [];
@@ -622,6 +630,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     await CheckAndInstallMPV();
+    $('#installer-status').textContent = 'mpv está listo';
     overlay.style.display = 'none';
     showView('landing');
   } catch (err) {

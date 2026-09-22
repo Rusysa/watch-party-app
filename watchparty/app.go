@@ -86,6 +86,14 @@ func NewApp() *App {
 // startup is called when the app starts. The context is saved so we can call runtime methods.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Start the prerequisite check as soon as Wails is ready. The frontend also
+	// awaits this operation so it can show progress; Manager serializes both
+	// calls and performs at most one installation.
+	go func() {
+		if err := a.CheckAndInstallMPV(); err != nil {
+			log.Printf("mpv prerequisite check: %v", err)
+		}
+	}()
 }
 
 // CheckAndInstallMPV checks if mpv is installed, and if not, downloads it.
@@ -544,7 +552,13 @@ func (a *App) handleMPVEvents(client *mpv.Client) {
 				runtime.EventsEmit(a.ctx, "playback:position", pos)
 			}
 		case "end-file":
-			runtime.EventsEmit(a.ctx, "playback:ended", nil)
+			if evt.Reason == "error" || evt.Reason == "unsupported" {
+				runtime.EventsEmit(a.ctx, "playback:error", "mpv no pudo cargar el enlace de vídeo")
+			} else {
+				runtime.EventsEmit(a.ctx, "playback:ended", nil)
+			}
+		case "file-loaded":
+			runtime.EventsEmit(a.ctx, "playback:loaded", nil)
 		}
 	}
 }

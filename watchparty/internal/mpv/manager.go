@@ -28,7 +28,7 @@ type githubRelease struct {
 	} `json:"assets"`
 }
 
-// Manager handles the automatic installation of mpv.exe
+// Manager handles detection and automatic installation of mpv on Windows.
 type Manager struct {
 	mu     sync.Mutex
 	binDir string
@@ -64,13 +64,19 @@ func (m *Manager) GetMPVPath() string {
 		return path
 	}
 	path := filepath.Join(m.binDir, "mpv.exe")
+	// A marker means the executable and its runtime DLLs were extracted as a
+	// complete, verified bundle. Older releases of WatchParty extracted only
+	// mpv.exe, which cannot start with the Windows builds that depend on DLLs.
+	marker := filepath.Join(m.binDir, ".mpv-installed")
 	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
-		return path
+		if markerInfo, markerErr := os.Lstat(marker); markerErr == nil && markerInfo.Mode().IsRegular() {
+			return path
+		}
 	}
 	return ""
 }
 
-// Install downloads and extracts mpv.exe if it's not already installed.
+// Install downloads and extracts mpv.exe and its Windows runtime if needed.
 func (m *Manager) Install(ctx context.Context, onProgress func(string)) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -168,7 +174,9 @@ func (m *Manager) Install(ctx context.Context, onProgress func(string)) (string,
 
 	onProgress("Extrayendo archivos...")
 
-	// 3. Extract the 7z archive
+	// 3. Extract the executable and its DLL runtime from the verified archive.
+	// mpv's Windows build is not a standalone executable: extracting only
+	// mpv.exe leaves it unable to start when a required DLL is missing.
 	r, err := sevenzip.OpenReader(tmpFile.Name())
 	if err != nil {
 		return "", fmt.Errorf("opening 7z archive: %w", err)
@@ -176,44 +184,60 @@ func (m *Manager) Install(ctx context.Context, onProgress func(string)) (string,
 	defer r.Close()
 
 	var mpvExeFound bool
-	targetExe := filepath.Join(m.binDir, "mpv.exe")
+	var runtimeFiles int
 
 	for _, f := range r.File {
-		// Only extract mpv.exe
-		if filepath.Base(f.Name) == "mpv.exe" && !f.FileInfo().IsDir() {
-			rc, err := f.Open()
-			if err != nil {
-				return "", fmt.Errorf("opening mpv.exe in archive: %w", err)
-			}
-			out, err := os.CreateTemp(m.binDir, ".mpv-*.exe")
-			if err != nil {
-				rc.Close()
-				return "", fmt.Errorf("creating mpv.exe: %w", err)
-			}
-			defer os.Remove(out.Name())
-			err = copyLimited(out, rc, 512<<20)
-			closeErr := out.Close()
+		name := filepath.Base(f.Name)
+		// Accept only flat runtime files. This prevents path traversal and avoids
+		// installing configuration, scripts, documentation, or unrelated tools.
+		if f.FileInfo().IsDir() || name != f.Name ||
+			(name != "mpv.exe" && !strings.HasSuffix(strings.ToLower(name), ".dll")) {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return "", fmt.Errorf("opening %s in archive: %w", name, err)
+		}
+		out, err := os.CreateTemp(m.binDir, ".mpv-runtime-*")
+		if err != nil {
 			rc.Close()
-			if err != nil {
-				return "", fmt.Errorf("extracting mpv.exe: %w", err)
-			}
-			if closeErr != nil {
-				return "", closeErr
-			}
-			if err := os.Rename(out.Name(), targetExe); err != nil {
-				return "", err
-			}
+			return "", fmt.Errorf("creating %s: %w", name, err)
+		}
+		err = copyLimited(out, rc, 512<<20)
+		closeErr := out.Close()
+		rc.Close()
+		if err != nil {
+			os.Remove(out.Name())
+			return "", fmt.Errorf("extracting %s: %w", name, err)
+		}
+		if closeErr != nil {
+			os.Remove(out.Name())
+			return "", closeErr
+		}
+		target := filepath.Join(m.binDir, name)
+		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			os.Remove(out.Name())
+			return "", fmt.Errorf("replacing %s: %w", name, err)
+		}
+		if err := os.Rename(out.Name(), target); err != nil {
+			os.Remove(out.Name())
+			return "", err
+		}
+		runtimeFiles++
+		if name == "mpv.exe" {
 			mpvExeFound = true
-			break
 		}
 	}
 
-	if !mpvExeFound {
-		return "", fmt.Errorf("mpv.exe not found in archive")
+	if !mpvExeFound || runtimeFiles < 2 {
+		return "", fmt.Errorf("mpv.exe or its Windows runtime DLLs were not found in archive")
+	}
+	if err := os.WriteFile(filepath.Join(m.binDir, ".mpv-installed"), []byte("verified\n"), 0600); err != nil {
+		return "", fmt.Errorf("writing mpv installation marker: %w", err)
 	}
 
 	onProgress("¡Listo!")
-	return targetExe, nil
+	return filepath.Join(m.binDir, "mpv.exe"), nil
 }
 
 func copyLimited(dst io.Writer, src io.Reader, limit int64) error {
