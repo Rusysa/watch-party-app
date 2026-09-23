@@ -154,7 +154,8 @@ jobs:
           merge-multiple: true
       - name: Package checksums and credits
         run: |
-          cp LICENSE docs/credits.md release/
+          cp LICENSE release/LICENSE
+          cp docs/credits.md release/CREDITS.md
           cd release
           sha256sum *.rpm *.exe > SHA256SUMS
       - name: Publish
