@@ -3,7 +3,8 @@
 
 import { CreateRoom, JoinRoom, LeaveRoom, Play, Pause, Seek,
          GetPlaybackState, GetRoomState, TransferControl,
-         SetSignalerURL, GetSignalerURL, CheckAndInstallMPV, SetStreamURL } from '../wailsjs/go/main/App.js';
+         SetSignalerURL, GetSignalerURL, CheckAndInstallMPV, SetStreamURL,
+         GetLastRoom, ForgetLastRoom, ReopenPlayer } from '../wailsjs/go/main/App.js';
 import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,6 +21,11 @@ const state = {
   position: 0,
   positionInterval: null,
   peerInterval: null,
+  lastRoom: null,
+  playerClosed: false,
+  voluntaryDeparture: new Set(),
+  seenPeers: new Set(),
+  signalerConnected: true,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,6 +151,10 @@ function renderPeers() {
 // Update room view from state
 // ─────────────────────────────────────────────────────────────────────────────
 function updateRoomUI() {
+  const connection = $('#room-connection-status');
+  if (connection) connection.textContent = state.signalerConnected ? '' : '⚠ Reconectando al signaler';
+  const reopen = $('#btn-reopen-player');
+  if (reopen) reopen.style.display = state.playerClosed && state.streamUrl ? 'inline-flex' : 'none';
   // Room badge
   const badge = $('#room-id-badge');
   if (badge) badge.textContent = state.roomId;
@@ -197,6 +207,10 @@ function enterRoom(roomId, isHost, streamUrl) {
   state.roomId  = roomId;
   state.isHost  = isHost;
   state.streamUrl = streamUrl || '';
+  state.playerClosed = false;
+  state.signalerConnected = true;
+  state.seenPeers.clear();
+  state.voluntaryDeparture.clear();
 
   showView('room');
   updateRoomUI();
@@ -219,7 +233,10 @@ function enterRoom(roomId, isHost, streamUrl) {
       const rs = await GetRoomState();
       state.peers = rs.peers || [];
       state.selfId = rs.selfId;
-      renderPeers();
+      state.isHost = rs.isHost;
+      state.streamUrl = rs.streamUrl;
+      state.playerClosed = rs.playerClosed;
+      updateRoomUI();
     } catch {}
   }, 2000);
 }
@@ -233,18 +250,38 @@ function setupEvents() {
 	  state.peers = room.peers || [];
 	  state.selfId = room.selfId;
 	  state.streamUrl = room.streamUrl;
+	  state.playerClosed = room.playerClosed;
 	  updateRoomUI();
 	});
   EventsOn('peer:joined', (peer) => {
-    toast(`👤 Peer conectado: ${peer.id.slice(0,8)}...`, 'info');
+    toast(`👤 Peer ${state.seenPeers.has(peer.id) ? 'reconectado' : 'conectado'}: ${peer.id.slice(0,8)}...`, 'info');
+    state.seenPeers.add(peer.id);
     state.peers = [...state.peers.filter(p => p.id !== peer.id), peer];
     renderPeers();
   });
 
   EventsOn('peer:left', (peerId) => {
-    toast(`👤 Peer desconectado: ${String(peerId).slice(0,8)}...`, 'info');
+    if (!state.voluntaryDeparture.has(peerId)) toast(`⚠️ Se perdió la conexión con ${String(peerId).slice(0,8)}...`, 'info');
+    state.voluntaryDeparture.delete(peerId);
     state.peers = state.peers.filter(p => p.id !== peerId);
     renderPeers();
+  });
+  EventsOn('peer:departure', (peerId) => {
+    state.voluntaryDeparture.add(peerId);
+    toast(`👤 ${String(peerId).slice(0,8)}... salió de la sala`, 'info');
+  });
+  EventsOn('room:host-change', message => toast(message, 'info', 6000));
+  EventsOn('room:connection', connected => {
+    if (connected !== state.signalerConnected) {
+      state.signalerConnected = connected;
+      toast(connected ? 'Conexión con el signaler restablecida' : 'Se perdió el signaler; reconectando...', 'info', 6000);
+      updateRoomUI();
+    }
+  });
+  EventsOn('playback:closed', () => {
+    state.playerClosed = true;
+    toast('Reproductor cerrado. Puedes volver a la transmisión.', 'info', 7000);
+    updateRoomUI();
   });
 
   EventsOn('peer:position', (data) => {
@@ -266,6 +303,7 @@ function setupEvents() {
 
   EventsOn('stream:received', (url) => {
     state.streamUrl = url;
+    state.playerClosed = false;
     toast('🎬 Stream recibido del host — lanzando mpv...', 'success');
     updateRoomUI();
   });
@@ -281,9 +319,12 @@ function setupEvents() {
   EventsOn('room:left', () => {
     state.inRoom = false;
     state.peers = [];
+    state.seenPeers.clear();
+    state.voluntaryDeparture.clear();
     if (state.positionInterval) clearInterval(state.positionInterval);
     if (state.peerInterval) clearInterval(state.peerInterval);
     showView('landing');
+    refreshLastRoom();
     toast('Has salido de la sala', 'info');
   });
 
@@ -296,6 +337,17 @@ function setupEvents() {
   EventsOn('error', (msg) => {
     toast(`Error: ${msg}`, 'error', 6000);
   });
+}
+
+async function refreshLastRoom() {
+  try {
+    state.lastRoom = await GetLastRoom();
+    const box = $('#last-room');
+    if (box) {
+      box.style.display = state.lastRoom.roomId ? 'block' : 'none';
+      $('#last-room-code').textContent = state.lastRoom.roomId || '';
+    }
+  } catch (err) { toast(`No se pudo consultar la última sala: ${err}`, 'error'); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -371,6 +423,14 @@ function buildUI() {
           </details>
         </div>
       </div>
+      <div class="card" id="last-room" style="display:none; margin:20px auto; max-width:440px;">
+        <h2>↩ Volver a la última sala: <span id="last-room-code"></span></h2>
+        <p class="card-desc">Introduce la contraseña para regresar a la sesión.</p>
+        <input type="password" id="input-last-password" placeholder="Contraseña de la sala" />
+        <button class="btn btn-primary" id="btn-rejoin">Volver a la sala</button>
+        <button class="btn btn-secondary" id="btn-forget">Olvidar sala</button>
+      </div>
+      <button class="btn btn-secondary" style="width:auto;margin:12px auto;display:block" id="btn-credits">Créditos y licencias</button>
     </div>
 
     <!-- ══════════════════ ROOM VIEW ══════════════════ -->
@@ -382,8 +442,9 @@ function buildUI() {
           <span class="topbar-logo">🎬 Watch Party</span>
           <div class="room-badge">
             <span class="dot"></span>
-            <span id="room-id-badge">---</span>
+          <span id="room-id-badge">---</span>
           </div>
+          <span id="room-connection-status" role="status"></span>
           <div class="copy-group" style="flex:0;">
             <input type="text" id="room-code-input" readonly style="width:120px;text-align:center;font-weight:700;letter-spacing:2px;" />
             <button class="btn btn-secondary" style="width:auto;padding:10px 12px;" onclick="copyToClipboard(document.getElementById('room-code-input').value)">📋</button>
@@ -405,6 +466,7 @@ function buildUI() {
             </div>
 
             <h2>🎮 Controles de reproducción</h2>
+            <button class="btn btn-secondary" id="btn-reopen-player" style="display:none;width:auto;margin:12px 0">↩ Volver a la transmisión</button>
 
             <div class="position-display">
               <div>
@@ -450,12 +512,21 @@ function buildUI() {
               <p>• Cada usuario recibe la transmisión directamente</p>
               <p>• La sincronización es automática (±2s)</p>
               <p style="margin-top:8px;">Solo el host controla play/pause/seek</p>
+              <button class="btn btn-secondary" id="btn-room-credits">Créditos y licencias</button>
             </div>
           </div>
         </aside>
 
       </div>
     </div>
+
+    <dialog id="credits-dialog" style="max-width:620px;background:#151923;color:#eee;border:1px solid #444;border-radius:12px;padding:24px;">
+      <h2>Créditos y licencias</h2>
+      <p>Watch Party utiliza Wails, Pion WebRTC, mpv, FFmpeg, Weron (servidor de señalización), Vite y la fuente Inter. Gracias a sus comunidades y a las de Go, Node.js, GTK y WebKitGTK.</p>
+      <p>En Windows, mpv se obtiene de shinchiro/mpv-winbuild-cmake. El código de sincronización está inspirado en las ideas de Syncplay. Consulta el inventario, los enlaces y los avisos de licencia en <code>docs/credits.md</code> y en el directorio de documentación del paquete.</p>
+      <p><a href="https://github.com/Rusysa/watch-party-app/blob/main/docs/credits.md" target="_blank" rel="noopener noreferrer">Ver todos los créditos y enlaces a sus licencias</a></p>
+      <button class="btn btn-secondary" id="btn-close-credits">Cerrar</button>
+    </dialog>
 
     <!-- ══════════════════ INSTALLER OVERLAY ══════════════════ -->
     <div id="installer-overlay" style="display:none; position:fixed; inset:0; background:rgba(10,11,16,0.95); z-index:9999; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(10px);">
@@ -494,6 +565,32 @@ function buildUI() {
 // Wire up event handlers
 // ─────────────────────────────────────────────────────────────────────────────
 function wireHandlers() {
+  refreshLastRoom();
+  $('#btn-reopen-player').addEventListener('click', async () => {
+    try { await ReopenPlayer(); state.playerClosed = false; updateRoomUI(); toast('Reproductor abierto; sincronizando...', 'success'); }
+    catch (err) { toast(`No se pudo reabrir: ${err}`, 'error'); }
+  });
+  $('#btn-rejoin').addEventListener('click', async () => {
+    const pass = $('#input-last-password').value;
+    const room = state.lastRoom;
+    if (!room?.roomId || pass.length < 4) { toast('Introduce la contraseña de la sala', 'error'); return; }
+    const btn = $('#btn-rejoin'); setLoading(btn, true);
+    try {
+      await SetSignalerURL(room.signalerUrl);
+      await JoinRoom(room.roomId, pass);
+      enterRoom(room.roomId, false, '');
+      toast('Reconectando con la sala...', 'info');
+    } catch (err) { toast(`No se pudo regresar: ${err}`, 'error'); }
+    finally { setLoading(btn, false); }
+  });
+  $('#btn-forget').addEventListener('click', async () => {
+    try { await ForgetLastRoom(); await refreshLastRoom(); }
+    catch (err) { toast(`No se pudo olvidar la sala: ${err}`, 'error'); }
+  });
+  for (const id of ['#btn-credits', '#btn-room-credits']) {
+    $(id).addEventListener('click', () => $('#credits-dialog').showModal());
+  }
+  $('#btn-close-credits').addEventListener('click', () => $('#credits-dialog').close());
   // ── Create room ──
   $('#btn-create-room').addEventListener('click', async () => {
     const pass = $('#input-host-password').value;
@@ -507,6 +604,7 @@ function wireHandlers() {
       const roomId = await CreateRoom(pass);
       state.selfId = '';
       enterRoom(roomId, true, '');
+      refreshLastRoom();
       toast(`Sala creada: ${roomId} 🎉`, 'success');
     } catch (err) {
       toast(`Error al crear sala: ${err}`, 'error', 6000);
@@ -529,6 +627,7 @@ function wireHandlers() {
     try {
       await JoinRoom(code, pass);
       enterRoom(code, false, '');
+      refreshLastRoom();
       toast(`Conectando a la sala ${code}...`, 'info');
     } catch (err) {
       toast(`Error al unirse: ${err}`, 'error', 6000);

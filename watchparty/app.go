@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
+	"sort"
 	"strings"
 	gosync "sync"
 
@@ -23,11 +26,12 @@ import (
 
 // RoomState is emitted to the frontend to describe current room status.
 type RoomState struct {
-	RoomID    string     `json:"roomId"`
-	SelfID    string     `json:"selfId"`
-	IsHost    bool       `json:"isHost"`
-	StreamURL string     `json:"streamUrl"`
-	Peers     []PeerView `json:"peers"`
+	RoomID       string     `json:"roomId"`
+	SelfID       string     `json:"selfId"`
+	IsHost       bool       `json:"isHost"`
+	StreamURL    string     `json:"streamUrl"`
+	PlayerClosed bool       `json:"playerClosed"`
+	Peers        []PeerView `json:"peers"`
 }
 
 // PeerView is the frontend-friendly representation of a peer.
@@ -61,10 +65,15 @@ type App struct {
 	roomCancel context.CancelFunc
 	syncCancel context.CancelFunc
 
-	signalerURL string
-	isHost      bool
-	streamURL   string
-	currentRoom string
+	signalerURL  string
+	isHost       bool
+	streamURL    string
+	currentRoom  string
+	lastSession  Session
+	lastState    PlaybackState
+	playerClosed bool
+	launching    bool
+	restoring    bool
 }
 
 // NewApp creates a new App application struct.
@@ -80,6 +89,7 @@ func NewApp() *App {
 	return &App{
 		mpvManager:  mgr,
 		signalerURL: signalerURL,
+		lastSession: readSession(),
 	}
 }
 
@@ -141,6 +151,29 @@ func (a *App) CreateRoom(password string) (string, error) {
 	return roomID, nil
 }
 
+// GetLastRoom exposes non-secret reconnect details to the UI.
+func (a *App) GetLastRoom() Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s := a.lastSession
+	s.PrivateKey = ""
+	return s
+}
+
+func (a *App) ForgetLastRoom() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	path, err := sessionPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	a.lastSession = Session{}
+	return nil
+}
+
 // JoinRoom joins an existing watch party room as a peer.
 // The stream URL will be received from the host via the data channel.
 func (a *App) JoinRoom(roomID, password string) error {
@@ -156,6 +189,47 @@ func (a *App) JoinRoom(roomID, password string) error {
 	return a.startRoom(roomID, password, "peer", "")
 }
 
+// ReopenPlayer rejoins playback without leaving the P2P room.
+func (a *App) ReopenPlayer() error {
+	a.mu.Lock()
+	if a.room == nil || a.streamURL == "" || a.mpvClient != nil || a.launching {
+		a.mu.Unlock()
+		return fmt.Errorf("no hay una transmisión pendiente de reabrir")
+	}
+	url, isHost, playback := a.streamURL, a.room.IsHost(), a.lastState
+	a.restoring = true
+	a.mu.Unlock()
+	defer func() { a.mu.Lock(); a.restoring = false; a.mu.Unlock() }()
+	if err := a.launchMPV(url); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	client := a.mpvClient
+	a.mu.Unlock()
+	if client != nil {
+		client.Pause()
+		if playback.Position > 0 {
+			client.Seek(playback.Position)
+		}
+		if isHost && !playback.Paused {
+			client.Play()
+		}
+		if isHost {
+			a.mu.Lock()
+			ctrl := a.controller
+			a.mu.Unlock()
+			if ctrl != nil {
+				if playback.Paused {
+					ctrl.NotifyPause(playback.Position)
+				} else {
+					ctrl.NotifyPlay(playback.Position)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // SetStreamURL is called by the host from the UI to set/change the video link.
 func (a *App) SetStreamURL(rawURL string) error {
 	// Validate URL scheme before accepting
@@ -169,6 +243,7 @@ func (a *App) SetStreamURL(rawURL string) error {
 		return fmt.Errorf("only the host can set the stream url")
 	}
 	a.streamURL = rawURL
+	a.lastState = PlaybackState{Paused: true}
 	room := a.room
 	a.mu.Unlock()
 
@@ -185,9 +260,11 @@ func (a *App) SetStreamURL(rawURL string) error {
 
 	// Broadcast the new URL to everyone
 	room.Broadcast(p2p.Message{
-		Type: p2p.MsgHello,
-		Role: "host",
-		URL:  rawURL,
+		Type:       p2p.MsgHello,
+		Role:       "host",
+		URL:        rawURL,
+		CreatorKey: room.CreatorKey(),
+		Paused:     a.GetPlaybackState().Paused,
 	})
 
 	return nil
@@ -258,6 +335,7 @@ func (a *App) Play() error {
 		return err
 	}
 	pos, _ := a.mpvClient.GetPosition()
+	a.lastState = PlaybackState{Paused: false, Position: pos}
 	if a.controller != nil {
 		a.controller.NotifyPlay(pos)
 	}
@@ -279,6 +357,7 @@ func (a *App) Pause() error {
 		return err
 	}
 	pos, _ := a.mpvClient.GetPosition()
+	a.lastState = PlaybackState{Paused: true, Position: pos}
 	if a.controller != nil {
 		a.controller.NotifyPause(pos)
 	}
@@ -302,6 +381,7 @@ func (a *App) Seek(position float64) error {
 	if err := a.mpvClient.Seek(position); err != nil {
 		return err
 	}
+	a.lastState.Position = position
 	if a.controller != nil {
 		a.controller.NotifySeek(position)
 	}
@@ -314,10 +394,17 @@ func (a *App) GetPlaybackState() PlaybackState {
 	defer a.mu.Unlock()
 
 	if a.mpvClient == nil {
-		return PlaybackState{}
+		return a.lastState
 	}
-	pos, _ := a.mpvClient.GetPosition()
-	paused := a.mpvClient.IsPaused()
+	pos, err := a.mpvClient.GetPosition()
+	if err != nil {
+		return a.lastState
+	}
+	paused, err := a.mpvClient.GetPaused()
+	if err != nil {
+		return a.lastState
+	}
+	a.lastState = PlaybackState{Paused: paused, Position: pos}
 	return PlaybackState{Paused: paused, Position: pos}
 }
 
@@ -337,11 +424,12 @@ func (a *App) GetRoomState() RoomState {
 	}
 
 	return RoomState{
-		RoomID:    a.currentRoom,
-		SelfID:    a.room.SelfID(),
-		IsHost:    a.room.IsHost(),
-		StreamURL: a.streamURL,
-		Peers:     peers,
+		RoomID:       a.currentRoom,
+		SelfID:       a.room.SelfID(),
+		IsHost:       a.room.IsHost(),
+		StreamURL:    a.streamURL,
+		PlayerClosed: a.playerClosed,
+		Peers:        peers,
 	}
 }
 
@@ -355,11 +443,30 @@ func (a *App) startRoom(roomID, password, role, streamURL string) error {
 
 	// Leave any existing room first
 	a.leaveRoomNoLock()
+	var session Session
+	var private ed25519.PrivateKey
+	if role == "host" {
+		var err error
+		session, private, err = newSession(roomID, a.signalerURL)
+		if err != nil {
+			return err
+		}
+	} else if a.lastSession.RoomID == roomID && a.lastSession.SignalerURL == a.signalerURL {
+		session = a.lastSession
+		key, _ := base64.RawStdEncoding.DecodeString(session.PrivateKey)
+		if len(key) == ed25519.PrivateKeySize && session.Creator {
+			private = key
+		}
+	} else {
+		session = Session{RoomID: roomID, SignalerURL: a.signalerURL}
+	}
 
 	rctx, rcancel := context.WithCancel(a.ctx)
 	a.roomCancel = rcancel
 
 	room := p2p.NewRoom(a.signalerURL, roomID, password, role, streamURL)
+	public, _ := base64.RawStdEncoding.DecodeString(session.CreatorKey)
+	room.SetCreatorIdentity(public, private)
 	if err := room.Open(rctx); err != nil {
 		rcancel()
 		return fmt.Errorf("joining room: %w", err)
@@ -369,6 +476,10 @@ func (a *App) startRoom(roomID, password, role, streamURL string) error {
 	a.isHost = role == "host"
 	a.streamURL = streamURL
 	a.currentRoom = roomID
+	a.lastSession = session
+	if err := saveSession(session); err != nil {
+		log.Printf("app: cannot remember room: %v", err)
+	}
 
 	// Start event handlers
 	go a.handleRoomEvents(rctx, room)
@@ -378,6 +489,12 @@ func (a *App) startRoom(roomID, password, role, streamURL string) error {
 
 func (a *App) launchMPV(streamURL string) error {
 	a.mu.Lock()
+	if a.launching {
+		a.mu.Unlock()
+		return fmt.Errorf("el reproductor ya se está abriendo")
+	}
+	a.launching = true
+	defer func() { a.mu.Lock(); a.launching = false; a.mu.Unlock() }()
 	path := a.mpvPath
 
 	// If MPV is already running, close it first
@@ -385,6 +502,7 @@ func (a *App) launchMPV(streamURL string) error {
 		a.mpvClient.Close()
 		a.mpvClient = nil
 	}
+	a.controller = nil
 	if a.syncCancel != nil {
 		a.syncCancel()
 		a.syncCancel = nil
@@ -410,7 +528,13 @@ func (a *App) launchMPV(streamURL string) error {
 	}
 
 	a.mu.Lock()
+	if a.room != room {
+		a.mu.Unlock()
+		client.Close()
+		return fmt.Errorf("la sala cambió mientras se abría el reproductor")
+	}
 	a.mpvClient = client
+	a.playerClosed = false
 	a.mpvCancel = mpvCancel
 
 	// Start the sync controller
@@ -438,6 +562,9 @@ func (a *App) handleRoomEvents(ctx context.Context, room *p2p.Room) {
 			return
 
 		case info := <-room.PeerJoined:
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("app: peer joined: %s", info.ID)
 			runtime.EventsEmit(a.ctx, "peer:joined", PeerView{
 				ID:   info.ID,
@@ -446,12 +573,38 @@ func (a *App) handleRoomEvents(ctx context.Context, room *p2p.Room) {
 			a.emitRoomState()
 
 		case peerID := <-room.PeerLeft:
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("app: peer left: %s", peerID)
 			runtime.EventsEmit(a.ctx, "peer:left", peerID)
+			if room.IsHost() {
+				runtime.EventsEmit(a.ctx, "room:host-change", "Se asignó un host temporal")
+			}
 			a.emitRoomState()
+		case <-room.RoleChanged:
+			a.mu.Lock()
+			if a.room != room {
+				a.mu.Unlock()
+				return
+			}
+			a.isHost = room.IsHost()
+			a.mu.Unlock()
+			a.emitRoomState()
+		case connected := <-room.Connection:
+			if ctx.Err() != nil {
+				return
+			}
+			runtime.EventsEmit(a.ctx, "room:connection", connected)
 
 		case inc := <-room.Incoming:
 			if ctx.Err() != nil {
+				return
+			}
+			a.mu.Lock()
+			current := a.room == room
+			a.mu.Unlock()
+			if !current {
 				return
 			}
 			a.handleIncoming(ctx, inc)
@@ -481,10 +634,73 @@ func (a *App) handleIncoming(ctx context.Context, inc p2p.IncomingMsg) {
 		}
 		a.mu.Unlock()
 		a.emitRoomState()
+	case p2p.MsgClaim:
+		a.mu.Lock()
+		if a.room != nil && !a.room.IsHost() && a.streamURL != "" {
+			a.room.SendTo(inc.SenderID, p2p.Message{Type: p2p.MsgSnapshot, URL: a.streamURL,
+				Position: a.lastState.Position, Paused: a.lastState.Paused})
+		}
+		a.isHost = a.room != nil && a.room.IsHost()
+		a.mu.Unlock()
+		runtime.EventsEmit(a.ctx, "room:host-change", "El creador recuperó el control")
+		a.emitRoomState()
+	case p2p.MsgSnapshot:
+		a.mu.Lock()
+		if a.room == nil || !a.room.IsHost() {
+			a.mu.Unlock()
+			return
+		}
+		wasPlaying := a.mpvClient != nil && a.streamURL == msg.URL
+		a.streamURL = msg.URL
+		a.lastState = PlaybackState{Position: msg.Position, Paused: msg.Paused}
+		a.room.SetStreamURL(msg.URL)
+		room := a.room
+		a.mu.Unlock()
+		room.Broadcast(p2p.Message{Type: p2p.MsgHello, Role: "host", URL: msg.URL, CreatorKey: room.CreatorKey(), Position: msg.Position, Paused: msg.Paused})
+		if !wasPlaying {
+			if err := a.launchMPV(msg.URL); err != nil {
+				runtime.EventsEmit(a.ctx, "error", err.Error())
+			} else {
+				a.mu.Lock()
+				client := a.mpvClient
+				a.mu.Unlock()
+				if client != nil {
+					client.Pause()
+					client.Seek(msg.Position)
+					if !msg.Paused {
+						client.Play()
+					}
+				}
+			}
+		} else {
+			a.mu.Lock()
+			client := a.mpvClient
+			a.mu.Unlock()
+			if client != nil {
+				client.Seek(msg.Position)
+				if msg.Paused {
+					client.Pause()
+				} else {
+					client.Play()
+				}
+			}
+		}
+		a.emitRoomState()
+	case p2p.MsgLeave:
+		runtime.EventsEmit(a.ctx, "peer:departure", inc.SenderID)
 	case p2p.MsgHello:
 		a.mu.Lock()
-		isHost := a.isHost
+		isHost := a.room != nil && a.room.IsHost()
+		a.isHost = isHost
 		trustedHost := a.room != nil && inc.SenderID == a.room.HostID()
+		if trustedHost && msg.Role == "host" {
+			if key := a.room.CreatorKey(); key != "" && a.lastSession.CreatorKey == "" && a.lastSession.RoomID == a.currentRoom {
+				a.lastSession.CreatorKey = key
+				if err := saveSession(a.lastSession); err != nil {
+					log.Printf("app: cannot remember creator: %v", err)
+				}
+			}
+		}
 		a.mu.Unlock()
 
 		// A peer sent us their hello. If we're a peer receiving from host,
@@ -498,23 +714,63 @@ func (a *App) handleIncoming(ctx context.Context, inc p2p.IncomingMsg) {
 
 			log.Print("app: received stream URL from host")
 			a.mu.Lock()
+			if a.room == nil || inc.SenderID != a.room.HostID() {
+				a.mu.Unlock()
+				return
+			}
+			alreadyPlaying := (a.mpvClient != nil || a.playerClosed) && a.streamURL == msg.URL
 			a.streamURL = msg.URL
+			a.lastState = PlaybackState{Position: msg.Position, Paused: msg.Paused}
 			if a.room != nil {
 				a.room.SetStreamURL(msg.URL)
 			}
 			a.mu.Unlock()
 
 			// Launch mpv with the received URL
+			if alreadyPlaying {
+				a.emitRoomState()
+				return
+			}
 			if err := a.launchMPV(msg.URL); err != nil {
 				log.Printf("app: error launching mpv: %v", err)
 				runtime.EventsEmit(a.ctx, "error", err.Error())
 				return
 			}
+			a.mu.Lock()
+			client := a.mpvClient
+			a.mu.Unlock()
+			if client != nil {
+				if msg.Paused {
+					client.Pause()
+				}
+				if msg.Position > 0 {
+					client.Seek(msg.Position)
+				}
+			}
 			runtime.EventsEmit(a.ctx, "stream:received", msg.URL)
 			a.emitRoomState()
 		}
+		a.emitRoomState()
+
+	case p2p.MsgPlay, p2p.MsgPause, p2p.MsgSeek:
+		a.mu.Lock()
+		if a.room != nil && inc.SenderID == a.room.HostID() {
+			a.lastState.Position = msg.Position
+			if msg.Type == p2p.MsgPlay {
+				a.lastState.Paused = false
+			}
+			if msg.Type == p2p.MsgPause {
+				a.lastState.Paused = true
+			}
+		}
+		a.mu.Unlock()
 
 	case p2p.MsgSync:
+		if a.room != nil && inc.SenderID == a.room.HostID() {
+			a.mu.Lock()
+			a.lastState = PlaybackState{Paused: msg.Paused, Position: msg.Position}
+			a.mu.Unlock()
+		}
 		// Forward peer positions to the UI for the dashboard
 		runtime.EventsEmit(a.ctx, "peer:position", map[string]interface{}{
 			"peerId":   inc.SenderID,
@@ -525,6 +781,12 @@ func (a *App) handleIncoming(ctx context.Context, inc p2p.IncomingMsg) {
 
 func (a *App) handleMPVEvents(client *mpv.Client) {
 	for evt := range client.Events {
+		a.mu.Lock()
+		current := a.mpvClient == client
+		a.mu.Unlock()
+		if !current {
+			return
+		}
 		switch evt.Event {
 		case "property-change":
 			switch evt.Name {
@@ -539,8 +801,9 @@ func (a *App) handleMPVEvents(client *mpv.Client) {
 				a.mu.Lock()
 				ctrl := a.controller
 				isHost := a.isHost
+				restoring := a.restoring
 				a.mu.Unlock()
-				if ctrl != nil && isHost {
+				if ctrl != nil && isHost && !restoring {
 					if paused {
 						ctrl.NotifyPause(pos)
 					} else {
@@ -561,6 +824,28 @@ func (a *App) handleMPVEvents(client *mpv.Client) {
 			runtime.EventsEmit(a.ctx, "playback:loaded", nil)
 		}
 	}
+	a.mu.Lock()
+	if a.mpvClient == client {
+		a.mpvClient = nil
+		a.playerClosed = true
+		a.controller = nil
+		if a.syncCancel != nil {
+			a.syncCancel()
+			a.syncCancel = nil
+		}
+		if a.mpvCancel != nil {
+			a.mpvCancel()
+			a.mpvCancel = nil
+		}
+		if a.room != nil && a.room.IsHost() {
+			a.lastState.Paused = true
+			a.room.Broadcast(p2p.Message{Type: p2p.MsgPause, Position: a.lastState.Position})
+		}
+		a.mu.Unlock()
+		runtime.EventsEmit(a.ctx, "playback:closed", nil)
+		return
+	}
+	a.mu.Unlock()
 }
 
 func (a *App) emitRoomState() {
@@ -588,6 +873,16 @@ func (a *App) leaveRoomNoLock() {
 		a.mpvClient = nil
 	}
 	if a.room != nil {
+		if a.room.IsHost() {
+			var ids []string
+			for _, p := range a.room.Peers() {
+				ids = append(ids, p.ID)
+			}
+			sort.Strings(ids)
+			if len(ids) > 0 {
+				_ = a.room.TransferControl(ids[0])
+			}
+		}
 		a.room.Close()
 		a.room = nil
 	}
@@ -599,6 +894,8 @@ func (a *App) leaveRoomNoLock() {
 	a.streamURL = ""
 	a.currentRoom = ""
 	a.controller = nil
+	a.lastState = PlaybackState{Paused: true}
+	a.playerClosed = false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

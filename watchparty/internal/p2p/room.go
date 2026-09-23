@@ -5,6 +5,8 @@ package p2p
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -22,23 +24,29 @@ import (
 type MsgType string
 
 const (
-	MsgHello    MsgType = "hello"    // first message: share URL and role
+	MsgHello    MsgType = "hello"    // share current URL, playback state and role
 	MsgPlay     MsgType = "play"     // resume playback
 	MsgPause    MsgType = "pause"    // pause playback
 	MsgSeek     MsgType = "seek"     // seek to position
 	MsgSync     MsgType = "sync"     // periodic heartbeat with position
 	MsgTransfer MsgType = "transfer" // transfer host control to a peer
+	MsgClaim    MsgType = "claim"    // signed return of the room creator
+	MsgLeave    MsgType = "leave"    // voluntary departure
+	MsgSnapshot MsgType = "snapshot" // current stream sent by outgoing host to creator
 )
 
 // Message is the envelope sent over the WebRTC data channel.
 type Message struct {
-	Type      MsgType `json:"type"`
-	Position  float64 `json:"pos,omitempty"`    // seconds
-	Timestamp int64   `json:"ts,omitempty"`     // unix ms (sender's clock)
-	URL       string  `json:"url,omitempty"`    // stream URL (hello only)
-	Role      string  `json:"role,omitempty"`   // "host" or "peer" (hello only)
-	TargetID  string  `json:"target,omitempty"` // peer ID (transfer only)
-	Paused    bool    `json:"paused,omitempty"` // true if host is paused (sync only)
+	Type       MsgType `json:"type"`
+	Position   float64 `json:"pos,omitempty"`    // seconds
+	Timestamp  int64   `json:"ts,omitempty"`     // unix ms (sender's clock)
+	URL        string  `json:"url,omitempty"`    // stream URL (hello or snapshot)
+	Role       string  `json:"role,omitempty"`   // "host" or "peer" (hello only)
+	TargetID   string  `json:"target,omitempty"` // peer ID (transfer only)
+	Paused     bool    `json:"paused,omitempty"` // host pause state in sync/hello/snapshot
+	CreatorKey string  `json:"creatorKey,omitempty"`
+	Signature  string  `json:"signature,omitempty"`
+	Term       uint64  `json:"term,omitempty"` // leadership revision
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,13 +75,21 @@ type IncomingMsg struct {
 type Room struct {
 	mu sync.RWMutex
 
-	selfID      string
-	hostID      string // pinned on first host hello; changed only by the current host
-	role        string // "host" or "peer"
-	streamURL   string
-	signalerURL string
-	roomID      string
-	password    string
+	selfID       string
+	hostID       string // current controller, updated by transfer, election or signed creator claim
+	role         string // "host" or "peer"
+	streamURL    string
+	streamPos    float64
+	streamPaused bool
+	signalerURL  string
+	roomID       string
+	password     string
+	creatorKey   ed25519.PublicKey
+	creatorPriv  ed25519.PrivateKey
+	previousHost string
+	claimOnJoin  bool
+	term         uint64
+	creatorID    string
 
 	adapter *transport.Adapter
 	cancel  context.CancelFunc
@@ -85,23 +101,50 @@ type Room struct {
 	// Incoming messages from any peer
 	Incoming chan IncomingMsg
 	// PeerJoined / PeerLeft events for the UI
-	PeerJoined chan PeerInfo
-	PeerLeft   chan string
+	PeerJoined  chan PeerInfo
+	PeerLeft    chan string
+	RoleChanged chan struct{}
+	Connection  chan bool
+}
+
+// SetCreatorIdentity pins the creator key from a previous visit and optionally
+// supplies the private key held only by the creator. Call before Open.
+func (r *Room) SetCreatorIdentity(public ed25519.PublicKey, private ed25519.PrivateKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.creatorKey = append(ed25519.PublicKey(nil), public...)
+	r.creatorPriv = append(ed25519.PrivateKey(nil), private...)
+	r.claimOnJoin = r.role == "peer" && len(private) == ed25519.PrivateKeySize
+}
+
+func (r *Room) CreatorKey() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return base64.RawStdEncoding.EncodeToString(r.creatorKey)
+}
+
+func (r *Room) IsCreator() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.creatorPriv) == ed25519.PrivateKeySize
 }
 
 // NewRoom creates a room but does not connect yet.
 func NewRoom(signalerURL, roomID, password, role, streamURL string) *Room {
 	return &Room{
-		signalerURL: signalerURL,
-		roomID:      roomID,
-		password:    password,
-		role:        role,
-		streamURL:   streamURL,
-		peerConns:   make(map[string]func([]byte) error),
-		peers:       make(map[string]*PeerInfo),
-		Incoming:    make(chan IncomingMsg, 128),
-		PeerJoined:  make(chan PeerInfo, 32),
-		PeerLeft:    make(chan string, 32),
+		signalerURL:  signalerURL,
+		roomID:       roomID,
+		password:     password,
+		role:         role,
+		streamURL:    streamURL,
+		streamPaused: true,
+		peerConns:    make(map[string]func([]byte) error),
+		peers:        make(map[string]*PeerInfo),
+		Incoming:     make(chan IncomingMsg, 128),
+		PeerJoined:   make(chan PeerInfo, 32),
+		PeerLeft:     make(chan string, 32),
+		RoleChanged:  make(chan struct{}, 8),
+		Connection:   make(chan bool, 8),
 	}
 }
 
@@ -137,14 +180,40 @@ func (r *Room) Open(ctx context.Context) error {
 	r.selfID = r.adapter.ID()
 	if r.role == "host" {
 		r.hostID = r.selfID
+		r.term = 1
+		if len(r.creatorPriv) == ed25519.PrivateKeySize {
+			r.creatorID = r.selfID
+		}
 	}
+	returningCreator := len(r.creatorPriv) == ed25519.PrivateKeySize && r.role == "peer"
 	r.mu.Unlock()
 	go r.eventLoop(rctx)
+	if returningCreator {
+		go func() {
+			select {
+			case <-rctx.Done():
+				return
+			case <-time.After(4 * time.Second):
+			}
+			r.mu.Lock()
+			if r.hostID == "" && len(r.peers) == 0 {
+				r.setHostLocked(r.selfID)
+				r.mu.Unlock()
+				select {
+				case r.RoleChanged <- struct{}{}:
+				default:
+				}
+			} else {
+				r.mu.Unlock()
+			}
+		}()
+	}
 	return nil
 }
 
 // Close disconnects from the room.
 func (r *Room) Close() {
+	r.Broadcast(Message{Type: MsgLeave})
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -154,7 +223,11 @@ func (r *Room) Close() {
 func (r *Room) SetStreamURL(url string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.streamURL = url
+	if r.streamURL != url {
+		r.streamURL = url
+		r.streamPos = 0
+		r.streamPaused = true
+	}
 }
 
 // SelfID returns this client's peer ID (available after Open).
@@ -198,6 +271,8 @@ func (r *Room) TransferControl(id string) error {
 		return fmt.Errorf("only the host can transfer to a connected peer")
 	}
 	r.setHostLocked(id)
+	r.term++
+	r.claimOnJoin = false
 	r.mu.Unlock()
 	r.Broadcast(Message{Type: MsgTransfer, TargetID: id})
 	return nil
@@ -220,25 +295,88 @@ func (r *Room) acceptMessage(id string, msg Message) bool {
 			return false
 		}
 		if msg.Role == "peer" {
-			return msg.URL == "" && id != r.hostID
+			return msg.URL == "" && msg.CreatorKey == "" && id != r.hostID
 		}
-		if r.role == "host" || (r.hostID != "" && r.hostID != id) {
-			return false
+		if r.hostID != id {
+			if (r.creatorID != "" && r.hostID == r.creatorID) ||
+				(r.role == "host" && len(r.creatorPriv) != 0) ||
+				(r.hostID != "" && (msg.Term < r.term || (msg.Term == r.term && id >= r.hostID))) {
+				return false
+			}
 		}
 		if msg.URL != "" && ValidateStreamURL(msg.URL) != nil {
 			return false
 		}
+		key, err := base64.RawStdEncoding.DecodeString(msg.CreatorKey)
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			return false
+		}
+		if len(r.creatorKey) != 0 && !ed25519.PublicKey(key).Equal(r.creatorKey) {
+			return false
+		}
+		r.creatorKey = key
+		if msg.Term > r.term {
+			r.term = msg.Term
+		}
 		r.setHostLocked(id)
+		if msg.URL != "" {
+			r.streamURL = msg.URL
+			r.streamPos, r.streamPaused = msg.Position, msg.Paused
+		}
+	case MsgClaim:
+		if len(r.creatorKey) != ed25519.PublicKeySize || msg.URL != "" ||
+			time.Since(time.UnixMilli(msg.Timestamp)) > 30*time.Second ||
+			time.Until(time.UnixMilli(msg.Timestamp)) > 5*time.Second {
+			return false
+		}
+		signature, err := base64.RawStdEncoding.DecodeString(msg.Signature)
+		if err != nil || !ed25519.Verify(r.creatorKey, []byte(fmt.Sprintf("%s:%s:%d", r.roomID, id, msg.Timestamp)), signature) {
+			return false
+		}
+		if r.hostID == id {
+			r.creatorID = id
+			if msg.Term > r.term {
+				r.term = msg.Term
+			}
+			return false // proof confirms the current host; no handover to report
+		}
+		r.previousHost = r.hostID
+		if msg.Term > r.term {
+			r.term = msg.Term
+		}
+		r.creatorID = id
+		r.setHostLocked(id)
+	case MsgSnapshot:
+		if r.role != "host" || len(r.creatorPriv) == 0 || id != r.previousHost ||
+			ValidateStreamURL(msg.URL) != nil {
+			return false
+		}
+		r.previousHost = ""
+		return true
+	case MsgLeave:
+		return true
 	case MsgTransfer:
-		if r.role == "host" || id != r.hostID || msg.TargetID == id ||
+		if r.role == "host" || id != r.hostID || msg.Term <= r.term || msg.TargetID == id ||
 			(msg.TargetID != r.selfID && r.peers[msg.TargetID] == nil) {
 			return false
 		}
 		r.setHostLocked(msg.TargetID)
+		r.term = msg.Term
 	case MsgPlay, MsgPause, MsgSeek:
-		return r.role != "host" && id == r.hostID
+		if r.role == "host" || id != r.hostID {
+			return false
+		}
+		r.streamPos = msg.Position
+		if msg.Type == MsgPlay {
+			r.streamPaused = false
+		}
+		if msg.Type == MsgPause {
+			r.streamPaused = true
+		}
 	case MsgSync:
-		return true
+		if id == r.hostID {
+			r.streamPos, r.streamPaused = msg.Position, msg.Paused
+		}
 	default:
 		return false
 	}
@@ -258,19 +396,40 @@ func (r *Room) Peers() []PeerInfo {
 
 // Broadcast sends a message to ALL connected peers.
 func (r *Room) Broadcast(msg Message) {
-	msg.Timestamp = time.Now().UnixMilli()
+	if msg.Timestamp == 0 {
+		msg.Timestamp = time.Now().UnixMilli()
+	}
+	r.mu.RLock()
+	if msg.Term == 0 {
+		msg.Term = r.term
+	}
+	r.mu.RUnlock()
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
 	data = append(data, '\n')
 
-	r.mu.RLock()
+	r.mu.Lock()
+	if r.role == "host" {
+		switch msg.Type {
+		case MsgHello:
+			r.streamPos, r.streamPaused = msg.Position, msg.Paused
+		case MsgSync:
+			r.streamPos, r.streamPaused = msg.Position, msg.Paused
+		case MsgPause:
+			r.streamPos, r.streamPaused = msg.Position, true
+		case MsgPlay:
+			r.streamPos, r.streamPaused = msg.Position, false
+		case MsgSeek:
+			r.streamPos = msg.Position
+		}
+	}
 	senders := make(map[string]func([]byte) error, len(r.peerConns))
 	for id, send := range r.peerConns {
 		senders[id] = send
 	}
-	r.mu.RUnlock()
+	r.mu.Unlock()
 	for id, send := range senders {
 		if err := send(data); err != nil {
 			log.Printf("p2p: error sending to peer %s: %v", id, err)
@@ -281,6 +440,11 @@ func (r *Room) Broadcast(msg Message) {
 // SendTo sends a message to a specific peer.
 func (r *Room) SendTo(peerID string, msg Message) error {
 	msg.Timestamp = time.Now().UnixMilli()
+	r.mu.RLock()
+	if msg.Term == 0 {
+		msg.Term = r.term
+	}
+	r.mu.RUnlock()
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -305,6 +469,11 @@ func (r *Room) eventLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case connected := <-r.adapter.Status():
+			select {
+			case r.Connection <- connected:
+			default:
+			}
 
 		case peer, ok := <-r.adapter.Accept():
 			if !ok || peer == nil {
@@ -357,15 +526,92 @@ func (r *Room) sendHello(peerID string) {
 	r.mu.RLock()
 	url := r.streamURL
 	role := r.role
+	pos, paused := r.streamPos, r.streamPaused
+	key := base64.RawStdEncoding.EncodeToString(r.creatorKey)
 	if role != "host" {
 		url = ""
 	}
 	r.mu.RUnlock()
-	r.SendTo(peerID, Message{
-		Type: MsgHello,
-		URL:  url,
-		Role: role,
-	})
+	if err := r.SendTo(peerID, Message{
+		Type:     MsgHello,
+		URL:      url,
+		Role:     role,
+		Position: pos,
+		Paused:   paused,
+		CreatorKey: func() string {
+			if role == "host" {
+				return key
+			}
+			return ""
+		}(),
+	}); err != nil {
+		return
+	}
+	r.mu.RLock()
+	claim := r.claimOnJoin
+	creatorHost := r.role == "host" && len(r.creatorPriv) == ed25519.PrivateKeySize
+	r.mu.RUnlock()
+	if claim {
+		time.Sleep(time.Second)
+		r.ClaimCreator()
+	} else if creatorHost {
+		r.sendCreatorProof(peerID)
+	}
+}
+
+func (r *Room) sendCreatorProof(peerID string) {
+	r.mu.RLock()
+	if r.role != "host" || len(r.creatorPriv) != ed25519.PrivateKeySize {
+		r.mu.RUnlock()
+		return
+	}
+	private := append(ed25519.PrivateKey(nil), r.creatorPriv...)
+	id, roomID := r.selfID, r.roomID
+	url, pos, paused := r.streamURL, r.streamPos, r.streamPaused
+	key := base64.RawStdEncoding.EncodeToString(r.creatorKey)
+	r.mu.RUnlock()
+	now := time.Now().UnixMilli()
+	if err := r.SendTo(peerID, Message{Type: MsgClaim, Timestamp: now,
+		Signature: base64.RawStdEncoding.EncodeToString(ed25519.Sign(private,
+			[]byte(fmt.Sprintf("%s:%s:%d", roomID, id, now))))}); err == nil {
+		_ = r.SendTo(peerID, Message{Type: MsgHello, Role: "host", URL: url,
+			CreatorKey: key, Position: pos, Paused: paused})
+	}
+}
+
+// ClaimCreator proves ownership without revealing the private key to peers.
+func (r *Room) ClaimCreator() {
+	r.mu.RLock()
+	if len(r.creatorPriv) != ed25519.PrivateKeySize || !r.claimOnJoin {
+		r.mu.RUnlock()
+		return
+	}
+	private := append(ed25519.PrivateKey(nil), r.creatorPriv...)
+	id, roomID := r.selfID, r.roomID
+	r.mu.RUnlock()
+	now := time.Now().UnixMilli()
+	r.mu.Lock()
+	if !r.claimOnJoin {
+		r.mu.Unlock()
+		return
+	}
+	r.term++
+	r.setHostLocked(id)
+	r.creatorID = id
+	r.claimOnJoin = false
+	r.mu.Unlock()
+	select {
+	case r.RoleChanged <- struct{}{}:
+	default:
+	}
+	r.Broadcast(Message{Type: MsgClaim, Signature: base64.RawStdEncoding.EncodeToString(
+		ed25519.Sign(private, []byte(fmt.Sprintf("%s:%s:%d", roomID, id, now)))), Timestamp: now})
+	r.mu.RLock()
+	url := r.streamURL
+	key := base64.RawStdEncoding.EncodeToString(r.creatorKey)
+	pos, paused := r.streamPos, r.streamPaused
+	r.mu.RUnlock()
+	r.Broadcast(Message{Type: MsgHello, Role: "host", URL: url, CreatorKey: key, Position: pos, Paused: paused})
 }
 
 // readPeer reads messages from a connected peer until disconnected.
@@ -376,12 +622,40 @@ func (r *Room) readPeer(ctx context.Context, peerID string, peer *transport.Peer
 	defer func() {
 		log.Printf("p2p: peer disconnected: %s", peerID)
 		r.mu.Lock()
+		wasHost := r.hostID == peerID
 		delete(r.peers, peerID)
 		delete(r.peerConns, peerID)
+		if wasHost {
+			r.hostID = ""
+			r.creatorID = ""
+			r.term++
+			// Deterministic interim host: peers remaining in the connected mesh
+			// choose the smallest transport ID, including the local participant.
+			candidate := r.selfID
+			for id := range r.peers {
+				if id < candidate {
+					candidate = id
+				}
+			}
+			r.setHostLocked(candidate)
+		}
 		r.mu.Unlock()
+		if wasHost {
+			select {
+			case r.RoleChanged <- struct{}{}:
+			default:
+			}
+		}
 		select {
 		case r.PeerLeft <- peerID:
 		default:
+		}
+		if wasHost && r.IsHost() {
+			r.mu.RLock()
+			url, pos, paused := r.streamURL, r.streamPos, r.streamPaused
+			key := base64.RawStdEncoding.EncodeToString(r.creatorKey)
+			r.mu.RUnlock()
+			r.Broadcast(Message{Type: MsgHello, Role: "host", URL: url, CreatorKey: key, Position: pos, Paused: paused})
 		}
 	}()
 

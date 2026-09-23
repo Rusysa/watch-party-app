@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	Channel            = "watchparty/sync/v1"
+	Channel            = "watchparty/sync/v2"
 	maxPeers           = 32
 	ioTimeout          = 10 * time.Second
 	negotiationTimeout = 30 * time.Second
@@ -29,6 +29,18 @@ type Peer struct {
 	Conn      io.ReadWriteCloser
 }
 
+type trackedConn struct {
+	io.ReadWriteCloser
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (c *trackedConn) Close() error {
+	err := c.ReadWriteCloser.Close()
+	c.once.Do(c.cancel)
+	return err
+}
+
 type Adapter struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -38,6 +50,7 @@ type Adapter struct {
 	api           *webrtc.API
 	configuration webrtc.Configuration
 	peers         chan *Peer
+	status        chan bool
 	done          chan struct{}
 	started       atomic.Bool
 	retryDelay    time.Duration
@@ -58,13 +71,14 @@ func New(ctx context.Context, address, password string, ice []string) (*Adapter,
 	return &Adapter{
 		ctx: ctx, cancel: cancel, address: address, id: uuid.NewString(),
 		cipher: aead, api: webrtc.NewAPI(webrtc.WithSettingEngine(settings)),
-		configuration: config, peers: make(chan *Peer), done: make(chan struct{}),
+		configuration: config, peers: make(chan *Peer), status: make(chan bool, 8), done: make(chan struct{}),
 		retryDelay: 2 * time.Second,
 	}, nil
 }
 
 func (a *Adapter) ID() string           { return a.id }
 func (a *Adapter) Accept() <-chan *Peer { return a.peers }
+func (a *Adapter) Status() <-chan bool  { return a.status }
 
 // Open verifies the initial WebSocket connection before reporting success.
 // Further connections keep the same peer ID until the room is closed.
@@ -108,6 +122,12 @@ func (a *Adapter) run(conn *websocket.Conn) {
 	defer close(a.peers)
 	for {
 		a.session(conn)
+		if a.ctx.Err() == nil {
+			select {
+			case a.status <- false:
+			default:
+			}
+		}
 		for {
 			select {
 			case <-a.ctx.Done():
@@ -117,6 +137,10 @@ func (a *Adapter) run(conn *websocket.Conn) {
 			var err error
 			conn, err = a.dial()
 			if err == nil {
+				select {
+				case a.status <- true:
+				default:
+				}
 				break
 			}
 		}
@@ -241,6 +265,13 @@ func (a *Adapter) session(conn *websocket.Conn) {
 				defer workers.Done()
 				defer r.cancel()
 				a.connectPeer(id, r, send)
+				// Reintroduce ourselves after a failed data channel, even when the
+				// signaler WebSocket has remained healthy throughout the failure.
+				select {
+				case <-ctx.Done():
+				case <-time.After(a.retryDelay):
+					send(signal{Type: "introduction", To: id})
+				}
 			}(msg.From, r)
 		}
 		select {
@@ -281,10 +312,11 @@ func (a *Adapter) connectPeer(id string, r *remote, send func(signal) error) {
 				return
 			}
 			timer.Stop()
+			conn := &trackedConn{ReadWriteCloser: stream, cancel: r.cancel}
 			select {
 			case <-r.ctx.Done():
-				stream.Close()
-			case a.peers <- &Peer{PeerID: id, ChannelID: dc.Label(), Conn: stream}:
+				conn.Close()
+			case a.peers <- &Peer{PeerID: id, ChannelID: dc.Label(), Conn: conn}:
 			}
 		})
 		dc.OnClose(r.cancel)

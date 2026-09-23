@@ -37,9 +37,26 @@ Windows antes de distribuir. WebView2 Runtime sigue siendo necesario.
 ## Linux
 
 El ejecutable es `watchparty/build/bin/watchparty`. Requiere GTK, WebKitGTK y las
-bibliotecas correspondientes de la distribución donde se compile. El repositorio
-no contiene recetas propias para `.deb`, `.rpm` o AppImage. Consulta los paquetes
-y los tags de WebKitGTK en [compilación](build.md#compilar-en-linux).
+bibliotecas correspondientes de la distribución donde se compile. Consulta los
+paquetes y los tags de WebKitGTK en [compilación](build.md#compilar-en-linux).
+
+El RPM de Fedora x86_64 se define en `packaging/rpm/watchparty.spec` y
+`packaging/rpm/watchparty.desktop`. Compila primero el ejecutable y luego,
+desde `watchparty/`, ejecuta
+`go list -deps -json . | python3 ../scripts/collect-licenses.py` para recopilar
+los avisos de los módulos Go usados. Luego, desde la raíz del repositorio,
+ejecuta `bash scripts/build-rpm.sh 0.1.0`.
+La salida se copia a `watchparty/build/bin/`. Requiere `rpmbuild` y las
+bibliotecas de WebKitGTK 4.1 durante la compilación; mpv es una dependencia
+de ejecución del RPM. Para instalar un archivo descargado de Releases:
+`sudo dnf install ./watchparty-*.rpm`. Las versiones nuevas se descargan de
+Releases e instalan de la misma manera; aún no hay repositorio DNF.
+
+`.github/workflows/fedora-rpm.yml` comprueba el proyecto en Fedora 44 y, al
+subir una etiqueta `vX.Y.Z`, publica el RPM y su suma SHA-256 en GitHub Releases.
+`LICENSE` contiene la licencia propia MIT; `license.spdx` la identifica y
+`rpm-license.spdx` enumera las licencias del código enlazado en el RPM.
+La receta exige la licencia y los avisos de Go.
 
 ## Recursos macOS del template
 

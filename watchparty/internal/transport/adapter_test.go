@@ -166,6 +166,18 @@ func TestWebRTCExchangeAndReconnect(t *testing.T) {
 	}
 }
 
+func TestDataChannelReconnectWithoutSignalerRestart(t *testing.T) {
+	_, address := newRelay(t)
+	a := testAdapter(t, address, "a")
+	b := testAdapter(t, address, "z")
+	ap, bp := acceptPeer(t, a), acceptPeer(t, b)
+	exchange(t, ap, bp)
+	ap.Conn.Close()
+	bp.Conn.Close()
+	ap, bp = acceptPeer(t, a), acceptPeer(t, b)
+	exchange(t, ap, bp)
+}
+
 func TestThreePeerMesh(t *testing.T) {
 	r, address := newRelay(t)
 	a := testAdapter(t, address, "b")

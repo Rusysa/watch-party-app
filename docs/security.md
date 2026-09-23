@@ -2,7 +2,8 @@
 
 [Índice de documentación](README.md)
 
-Fecha: **21 de septiembre de 2026**.
+Revisión inicial: **21 de septiembre de 2026**; actualización de recuperación y
+empaquetado: **23 de septiembre de 2026**.
 
 Alcance: lectura del código Go/JavaScript y configuración de despliegue,
 auditoría de dependencias npm/Go, pruebas de regresión de las fronteras de
@@ -14,7 +15,7 @@ externa ni una certificación de ausencia de vulnerabilidades.
 | Hallazgo | Cambio |
 | --- | --- |
 | Cualquier participante podía enviar `transfer` y alterar el control | Autorización en `internal/p2p/room.go`: solo el host conocido puede transferir a un participante conectado. La sala es la fuente de autoridad para la UI y el controlador de sincronización. |
-| Un `hello` posterior podía sustituir al host y lanzar otra URL | Se fija el primer host reconocido durante la sesión. Otros participantes no pueden reclamar ese rol ni anunciar URLs; los cambios posteriores requieren transferencia autorizada. El límite de confianza inicial se detalla más abajo. |
+| Un `hello` posterior podía sustituir al host y lanzar otra URL | Se fija el primer host reconocido durante la sesión. Un relevo válido cambia el controlador mediante `transfer`, elección temporal o firma del creador. Los hosts temporales se concilian mediante revisión e ID; el límite de confianza inicial se detalla más abajo. |
 | Play/pause/seek solo estaban restringidos en la UI | Comprobación de autoridad también en los métodos Go enlazados a JavaScript. Se rechazan posiciones negativas, no finitas o superiores a un año. |
 | Contraseñas concatenadas a la query permitían alterar parámetros | Construcción mediante `net/url`, conservando caracteres especiales. Se exige `wss`, salvo `ws` en loopback. Contraseñas de 4–256 bytes UTF-8 validadas por el backend. |
 | URL de streaming completa escrita en logs | Se elimina ese registro, se oculta el detalle del error inicial del adaptador que puede incluir credenciales y no se heredan stdout/stderr de mpv. |
@@ -83,8 +84,16 @@ El comando termina correctamente con código 0; no se han añadido exclusiones.
    anunciarse antes que el creador al conectarse un invitado. No hay una clave
    pública del creador incluida en la invitación ni identidad individual firmada.
    La solución completa requiere un protocolo de invitación autenticado. Si el
-   host se desconecta sin transferir, crea otra sala; no se elige automáticamente
-   un nuevo host a partir de un anuncio no autenticado.
+   host se desconecta se designa un host temporal entre los peers conectados.
+   El retorno del creador se verifica con una clave Ed25519 guardada localmente;
+   no autentica la invitación inicial y perder ese archivo impide probar la
+   identidad previa del creador. La clave privada se guarda en el archivo local
+   de sesión con permisos `0600` en Linux y los permisos de usuario en Windows,
+   nunca en el canal P2P. Un participante que
+   altere localmente ese archivo puede perder su capacidad de reclamación. Los
+   grupos separados por una partición de red
+   pueden discrepar temporalmente sobre el host; al recuperar sus enlaces
+   comparan revisiones de liderazgo y desempatan por ID.
 2. **La contraseña es conocida por el signaler.** Weron la recibe en la query y
    el cliente la reutiliza como clave de la señalización. Un operador del servidor
    o proxy TLS puede verla. No debe describirse como cifrado extremo a extremo
@@ -122,9 +131,13 @@ Entorno de revisión: Linux amd64, Go 1.27.1, Node.js 22.23.2, Wails 2.13.0.
 - `npm ci`, `npm audit` y compilación Vite: correctos.
 - `wails build -platform windows/amd64`: correcto; genera
   `watchparty/build/bin/watchparty.exe`. No se ejecutó el binario en Windows.
-- `wails build -tags webkit2_41`: bindings y frontend correctos; compilación
-  nativa bloqueada por falta de GTK, GIO, WebKitGTK y libsoup de desarrollo en
-  este entorno. Paquetes e instrucciones en [compilación](build.md).
+- Actualización del 23/09: `go test -race ./...` con Go 1.26, `npm run build`
+  con Node 24 y `wails build -tags webkit2_41` en contenedor Fedora 44:
+  correctos. El RPM se construyó e instaló con DNF en un Fedora 44 limpio.
+  También se generó el `.exe` Windows amd64 con el código actualizado y se
+  comprobó la compilación cruzada de sus paquetes Go. No se ha probado el
+  reingreso con vídeo entre escritorios reales ni una release publicada por
+  GitHub Actions.
 - No se verificó una sesión real entre dos equipos ni la descarga/ejecución de
   mpv en Windows. Los tests unitarios no sustituyen esa prueba de integración.
 

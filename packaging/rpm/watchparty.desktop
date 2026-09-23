@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Watch Party
+Comment=Reproducción compartida P2P
+Exec=watchparty
+Icon=watchparty
+Terminal=false
+Categories=AudioVideo;Video;Player;

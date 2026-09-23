@@ -55,6 +55,10 @@ Si tu distribución utiliza **WebKitGTK 4.0**, instala su paquete de desarrollo
 (por ejemplo `libwebkit2gtk-4.0-dev`) y omite `-tags webkit2_41` tanto en `build`
 como en `dev`. No mezcles el tag 4.1 con las bibliotecas 4.0.
 
+Para instalar el RPM precompilado de Fedora 44 x86_64, consulta
+[empaquetado](packaging.md#linux); no es necesario instalar Go, Node ni Wails
+en el equipo de destino.
+
 ## Compilar en Windows (amd64)
 
 Compila desde Windows para Windows. Instala:

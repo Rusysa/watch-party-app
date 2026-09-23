@@ -12,6 +12,7 @@ comparte la URL y controla reproducción, pausa y posición por WebRTC.
 | [Arquitectura y transporte](transport.md) | Componentes, STUN, señalización, WebRTC y migración de DTLS. |
 | [Despliegue en Render](render.md) | Servicio `signaler`, Docker, variables y conexión del cliente. |
 | [Empaquetado](packaging.md) | Iconos, metadatos y recursos de los instaladores Wails. |
+| [Créditos](credits.md) | Dependencias, agradecimientos y licencias de terceros. |
 | [Seguridad](security.md) | Correcciones, auditorías y límites del modelo de confianza. |
 | [Plan original](archive/plan-watchparty-debrid.md) | Investigación histórica, no especificación actual. |
 
@@ -47,7 +48,17 @@ rutas de estas guías indican siempre desde qué directorio deben ejecutarse.
 4. Los invitados introducen ambos datos en «Unirse a sala».
 5. El host pega el enlace directo HTTP/HTTPS y pulsa «Iniciar Transmisión».
 6. Usa los controles de la aplicación para play/pause/seek; «Control» transfiere
-   el rol a otro participante conectado. «Salir» cierra la sala local y mpv.
+   el rol a otro participante conectado. «Salir» cierra la sala local y mpv;
+   «Volver a la última sala» permite reingresar con la contraseña incluso tras
+   reiniciar. Si se cierra mpv, «Volver a la transmisión» lo abre de nuevo.
+
+La última sala y la identidad del creador se guardan en el directorio de
+configuración del usuario (`watchparty/session.json`; en Linux normalmente
+`~/.config/watchparty/session.json` y en Windows bajo
+`%APPDATA%\watchparty\session.json`). La contraseña y la URL del vídeo no se
+guardan. Para regresar tras reiniciar se vuelve a introducir la contraseña.
+«Olvidar sala» borra la identidad local: si eras el creador, no podrás
+demostrar después que eres el creador de esa sala.
 
 No hay resolución de torrents ni integración con APIs Debrid: el usuario obtiene
 el enlace fuera de la aplicación. Cada equipo descarga directamente desde el
@@ -69,7 +80,8 @@ terminar ni descifrar las conexiones DTLS.
 
 ## Licencias
 
-El repositorio no define una licencia propia. El cliente utiliza Pion WebRTC
-bajo MIT y ya no importa la librería Go de Weron. El servidor Weron de `signaler/`
-es un componente separado bajo AGPL-3.0. mpv y sus compilaciones tienen sus propias
-licencias y componentes; consulta las licencias aplicables al distribuir.
+El código propio del repositorio se publica bajo [MIT](../LICENSE). El cliente
+utiliza Pion WebRTC bajo MIT y no importa la librería Go de Weron. El servidor
+Weron de `signaler/` es un componente separado bajo AGPL-3.0. mpv, sus
+compilaciones y otros proyectos conservan sus licencias y avisos; consulta
+[Créditos](credits.md) antes de distribuir.

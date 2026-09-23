@@ -17,7 +17,8 @@ para descubrirse e intercambiar SDP antes de establecer WebRTC.
 ```
 
 - `watchparty/app.go` enlaza la interfaz y gestiona la sala y el proceso mpv.
-- `internal/p2p` autoriza `hello`, `play`, `pause`, `seek`, `sync` y `transfer`.
+- `internal/p2p` autoriza `hello`, `play`, `pause`, `seek`, `sync`, `transfer`,
+  `claim`, `snapshot` y la notificación de salida.
 - `internal/sync` envía posición cada 2 segundos y corrige el desfase con seeks
   o cambios de velocidad; sigue al host reconocido por la sala.
 - `internal/transport` implementa descubrimiento y canales de datos con Pion.
@@ -99,9 +100,23 @@ quien debe ofrecer. Esto evita ofertas simultáneas. Las descripciones se envía
 después de reunir los candidatos ICE, incluidos en el SDP; no se envían ni se
 procesan candidatos por mensajes `candidate` separados.
 
-El canal `watchparty/sync/v1` es fiable y ordenado. Los mensajes de sala continúan
+El canal `watchparty/sync/v2` es fiable y ordenado. Los mensajes de sala continúan
 siendo JSON delimitado por salto de línea. La autorización del host pertenece a
 la capa de sala, no al algoritmo que elige quién genera la oferta SDP.
+Todos los participantes deben actualizar al protocolo v2 antes de entrar en
+una sala; clientes que usan `watchparty/sync/v1` no podrán conectarse a ella.
+
+El creador conserva una clave Ed25519 en el archivo local de sesión (permisos
+0600 en Linux; en Windows se aplican los permisos del perfil del usuario).
+Los demás fijan su clave pública al conocer al host por primera vez. Al
+reingresar, el creador firma el código de sala, su ID de transporte y la marca
+temporal; los peers comprueban la firma antes de devolver el control. Si el host
+se desconecta, el menor ID de los participantes conectados asume el control
+temporalmente. Cada relevo aumenta una revisión de liderazgo. Si dos grupos
+separados vuelven a conectarse, prevalece la revisión mayor y, en empate, el
+menor ID; una reclamación firmada del creador tiene prioridad. Durante la
+partición, antes del restablecimiento del canal, ambos grupos pueden controlar
+sus propias copias del vídeo y no hay garantía de un único host global.
 
 ## Recursos, cancelación y reconexión
 
@@ -112,6 +127,8 @@ la capa de sala, no al algoritmo que elige quién genera la oferta SDP.
 - Pings cada 5 segundos y timeout de recepción de pong de 20 segundos.
 - Al perder el signaler se cierran las conexiones de esa sesión y se reintenta
   cada 2 segundos. El ID local se conserva durante la vida de la sala.
+- Al cerrar un canal WebRTC se reintenta una introducción dirigida aun cuando
+  el WebSocket del signaler no haya caído.
 - Cancelar la sala cierra los sockets, cancela las negociaciones y detiene los
   workers. No se registran la query del signaler ni las descripciones SDP.
 
