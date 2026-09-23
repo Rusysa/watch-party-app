@@ -96,6 +96,12 @@ Section
 
     !insertmacro wails.files
 
+    SetOutPath "$INSTDIR\licenses"
+    File /oname=LICENSE "..\..\..\..\LICENSE"
+    File /oname=CREDITS.md "..\..\..\..\docs\credits.md"
+    SetOutPath "$INSTDIR\licenses\third-party"
+    File /r "tmp\third-party\*"
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 

@@ -2,6 +2,13 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "watchparty",
   "outputfilename": "watchparty",
+  "info": {
+    "companyName": "rusysa",
+    "productName": "Watch Party",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2026 rusysa",
+    "comments": "Reproducción compartida y sincronizada entre participantes"
+  },
   "frontend:install": "npm ci",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",

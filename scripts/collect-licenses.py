@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Collect license notices from downloaded Go modules for RPM distribution.
+"""Collect license notices from downloaded Go modules for distribution.
 
-Run from watchparty/: go list -deps -json . | python3 ../scripts/collect-licenses.py
+Run from watchparty/: go list -deps -json . | python3 ../scripts/collect-licenses.py [output-dir]
 """
 import json
 import pathlib
@@ -10,7 +10,9 @@ import shutil
 import sys
 
 root = pathlib.Path(__file__).resolve().parents[1]
-dest = root / 'watchparty/build/bin/third-party'
+if len(sys.argv) > 2:
+    sys.exit('Usage: collect-licenses.py [output-dir]')
+dest = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else root / 'watchparty/build/bin/third-party'
 if dest.exists():
     shutil.rmtree(dest)
 dest.mkdir(parents=True, exist_ok=True)

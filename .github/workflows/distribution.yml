@@ -1,0 +1,158 @@
+name: Distribution
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: distribution-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fedora:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    timeout-minutes: 40
+    steps:
+      - name: Dependencies
+        run: dnf -y install golang nodejs24 nodejs24-bin nodejs24-npm nodejs24-npm-bin python3 gcc gcc-c++ pkgconf-pkg-config gtk3-devel webkit2gtk4.1-devel rpm-build git tar gzip
+      - uses: actions/checkout@v4
+      - name: Build Wails app
+        working-directory: watchparty
+        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -clean -tags webkit2_41
+      - name: Go tests
+        working-directory: watchparty
+        run: go test -race ./...
+      - name: Include Go module notices
+        working-directory: watchparty
+        run: go list -deps -json . | python3 ../scripts/collect-licenses.py
+      - name: Build and inspect RPM
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version=0.0.0; fi
+          bash scripts/build-rpm.sh "$version"
+          rpm -qpl watchparty/build/bin/*.rpm
+          rpm -qp --requires watchparty/build/bin/*.rpm
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test -s LICENSE
+            test -s packaging/rpm/license.spdx
+            test -s packaging/rpm/rpm-license.spdx
+            test "$(rpm -qp --queryformat '%{LICENSE}' watchparty/build/bin/*.rpm)" = "$(cat packaging/rpm/rpm-license.spdx)"
+          fi
+      - name: Upload release artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-fedora
+          path: watchparty/build/bin/*.rpm
+          retention-days: 1
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: watchparty/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: watchparty/frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+      - name: Add NSIS to PATH
+        run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\NSIS'
+      - name: Check makensis
+        run: Get-Command makensis -ErrorAction Stop
+      - name: Select version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = '0.0.0'
+          if ($env:REF_TYPE -eq 'tag') {
+            $version = $env:REF_NAME -replace '^v', ''
+            if ($version -notmatch '^\d+\.\d+\.\d+$') {
+              throw "La versión debe tener formato X.Y.Z: $version"
+            }
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "VERSION=$version"
+      - name: Stamp product version
+        run: |
+          $path = 'watchparty/wails.json'
+          $config = Get-Content $path -Raw | ConvertFrom-Json
+          $config.info.productVersion = $env:VERSION
+          $config | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding utf8
+      - name: Build Windows app and frontend
+        working-directory: watchparty
+        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -clean -platform windows/amd64
+      - name: Go tests
+        working-directory: watchparty
+        run: go test ./...
+      - name: Collect Windows Go module notices
+        working-directory: watchparty
+        shell: bash
+        run: |
+          set -o pipefail
+          go list -deps -json . | python ../scripts/collect-licenses.py build/windows/installer/tmp/third-party
+          test -s build/windows/installer/tmp/third-party/INDEX.md
+      - name: Build Wails app and NSIS installer
+        working-directory: watchparty
+        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -s -m -platform windows/amd64 -nsis
+      - name: Verify build outputs
+        run: |
+          foreach ($file in @('watchparty/build/bin/watchparty.exe', 'watchparty/build/bin/watchparty-amd64-installer.exe')) {
+            if (!(Test-Path $file) -or (Get-Item $file).Length -eq 0) {
+              throw "Falta el artefacto: $file"
+            }
+          }
+      - name: Stage installer
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item 'watchparty/build/bin/watchparty-amd64-installer.exe' "release/watchparty-$env:VERSION-windows-amd64-installer.exe"
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release/
+          retention-days: 7
+
+  release:
+    needs: [fedora, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a project license before publishing
+        run: |
+          test -s LICENSE
+          test -s packaging/rpm/license.spdx
+          test -s packaging/rpm/rpm-license.spdx
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Package checksums and credits
+        run: |
+          cp LICENSE docs/credits.md release/
+          cd release
+          sha256sum *.rpm *.exe > SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

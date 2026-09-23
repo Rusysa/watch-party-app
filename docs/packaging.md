@@ -24,15 +24,26 @@ En `watchparty/build/windows/`:
 | `installer/project.nsi` | Proyecto del instalador NSIS. |
 | `installer/wails_tools.nsh` | Funciones auxiliares del instalador Wails. |
 
-Con NSIS instalado y en `PATH`:
+Con NSIS instalado y en `PATH`, genera los avisos antes de compilar. Desde
+`watchparty/`:
 
 ```powershell
-wails build -clean -platform windows/amd64 -nsis
+wails build -clean -platform windows/amd64
+go list -deps -json . | python ../scripts/collect-licenses.py build/windows/installer/tmp/third-party
+wails build -s -m -platform windows/amd64 -nsis
 ```
 
 El ejecutable se llama `build/bin/watchparty.exe`; los artefactos del instalador
 se generan en el mismo directorio. Comprueba los metadatos y la ejecución en
-Windows antes de distribuir. WebView2 Runtime sigue siendo necesario.
+Windows antes de distribuir. WebView2 Runtime sigue siendo necesario; el
+instalador de Wails incorpora su bootstrapper. Incluye `LICENSE`, créditos y
+avisos de las dependencias Go en `licenses/`.
+
+La compilación de CI genera el instalador en un runner Windows y lo ofrece como
+artefacto temporal en cada ejecución. Las etiquetas `vX.Y.Z` lo publican en
+[GitHub Releases](https://github.com/Rusysa/watch-party-app/releases).
+Para actualizar una instalación Windows, descarga y ejecuta el instalador de la
+nueva versión. La aplicación no instala actualizaciones automáticamente.
 
 ## Linux
 
@@ -52,8 +63,10 @@ de ejecución del RPM. Para instalar un archivo descargado de Releases:
 `sudo dnf install ./watchparty-*.rpm`. Las versiones nuevas se descargan de
 Releases e instalan de la misma manera; aún no hay repositorio DNF.
 
-`.github/workflows/fedora-rpm.yml` comprueba el proyecto en Fedora 44 y, al
-subir una etiqueta `vX.Y.Z`, publica el RPM y su suma SHA-256 en GitHub Releases.
+`.github/workflows/distribution.yml` comprueba Fedora 44 y Windows amd64. Al
+subir una etiqueta `vX.Y.Z`, espera a que ambas compilaciones terminen y publica
+en una única GitHub Release el RPM, el instalador Windows, sus sumas SHA-256,
+`LICENSE` y `CREDITS.md`.
 `LICENSE` contiene la licencia propia MIT; `license.spdx` la identifica y
 `rpm-license.spdx` enumera las licencias del código enlazado en el RPM.
 La receta exige la licencia y los avisos de Go.

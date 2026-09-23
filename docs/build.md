@@ -89,13 +89,19 @@ Salida: **`watchparty\build\bin\watchparty.exe`**. Para un instalador, con NSIS
 en `PATH`:
 
 ```powershell
-wails build -clean -platform windows/amd64 -nsis
+wails build -clean -platform windows/amd64
+go list -deps -json . | python ../scripts/collect-licenses.py build/windows/installer/tmp/third-party
+wails build -s -m -platform windows/amd64 -nsis
 ```
 
 Los artefactos se generan en `build\bin`. También se verificó la generación del
 `.exe` desde Linux con `wails build -platform windows/amd64`; esto no sustituye
 las pruebas de ejecución en Windows. Para Linux hacen falta sus bibliotecas nativas.
 Windows ARM64 no está cubierto por el instalador automático de mpv.
+El workflow de [distribución](packaging.md#windows) compila y prueba en Windows
+amd64 y publica un instalador NSIS en Releases por cada etiqueta `vX.Y.Z`.
+Las nuevas versiones se instalan ejecutando el instalador descargado; no existe
+un actualizador automático integrado.
 
 ### Cómo se obtiene mpv
 
