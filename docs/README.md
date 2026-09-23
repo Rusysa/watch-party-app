@@ -60,10 +60,11 @@ guardan. Para regresar tras reiniciar se vuelve a introducir la contraseña.
 «Olvidar sala» borra la identidad local: si eras el creador, no podrás
 demostrar después que eres el creador de esa sala.
 
-En Windows, las instalaciones por usuario desde la versión `v0.2.0` descargan
-automáticamente las nuevas releases verificadas y las instalan al cerrar la
-aplicación. Consulta [empaquetado](packaging.md#windows) para migrar desde
-`v0.1.0` (instalación para todo el equipo).
+En Windows, desde `v0.2.1` se informa de las nuevas versiones y se pregunta si
+quieres instalarlas. La descarga empieza solo al pulsar «Instalar ahora»; tras
+verificarla, la aplicación se cierra, instala la actualización y se reinicia.
+Consulta [empaquetado](packaging.md#windows) para migrar manualmente desde
+`v0.1.0` o `v0.2.0`.
 
 No hay resolución de torrents ni integración con APIs Debrid: el usuario obtiene
 el enlace fuera de la aplicación. Cada equipo descarga directamente desde el

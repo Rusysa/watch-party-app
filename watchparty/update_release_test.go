@@ -14,9 +14,9 @@ import (
 
 func TestSelectUpdate(t *testing.T) {
 	asset := releaseAsset{
-		Name: "watchparty-0.2.0-windows-amd64-installer.exe", Size: 100,
+		Name: "watchparty-0.2.2-windows-amd64-consent-installer.exe", Size: 100,
 		Digest:      "sha256:" + strings.Repeat("ab", 32),
-		DownloadURL: "https://github.com/Rusysa/watch-party-app/releases/download/v0.2.0/watchparty-0.2.0-windows-amd64-installer.exe",
+		DownloadURL: "https://github.com/Rusysa/watch-party-app/releases/download/v0.2.2/watchparty-0.2.2-windows-amd64-consent-installer.exe",
 	}
 	for _, test := range []struct {
 		name, current string
@@ -24,17 +24,18 @@ func TestSelectUpdate(t *testing.T) {
 		want          bool
 		wantError     bool
 	}{
-		{name: "newer stable release", current: "0.1.0", want: true},
-		{name: "equal version", current: "0.2.0"},
+		{name: "newer stable release", current: "0.2.1", want: true},
+		{name: "equal version", current: "0.2.2"},
 		{name: "older release", current: "0.3.0"},
 		{name: "development build", current: "0.0.0"},
-		{name: "prerelease", current: "0.1.0", change: func(r *releaseInfo) { r.Prerelease = true }},
-		{name: "missing digest", current: "0.1.0", change: func(r *releaseInfo) { r.Assets[0].Digest = "" }, wantError: true},
-		{name: "redirected asset URL", current: "0.1.0", change: func(r *releaseInfo) { r.Assets[0].DownloadURL = "https://example.org/installer.exe" }, wantError: true},
-		{name: "wrong asset size", current: "0.1.0", change: func(r *releaseInfo) { r.Assets[0].Size = maxUpdateSize + 1 }, wantError: true},
+		{name: "prerelease", current: "0.2.1", change: func(r *releaseInfo) { r.Prerelease = true }},
+		{name: "missing digest", current: "0.2.1", change: func(r *releaseInfo) { r.Assets[0].Digest = "" }, wantError: true},
+		{name: "redirected asset URL", current: "0.2.1", change: func(r *releaseInfo) { r.Assets[0].DownloadURL = "https://example.org/installer.exe" }, wantError: true},
+		{name: "wrong asset size", current: "0.2.1", change: func(r *releaseInfo) { r.Assets[0].Size = maxUpdateSize + 1 }, wantError: true},
+		{name: "legacy installer name", current: "0.2.1", change: func(r *releaseInfo) { r.Assets[0].Name = "watchparty-0.2.2-windows-amd64-installer.exe" }, wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			release := releaseInfo{TagName: "v0.2.0", Assets: []releaseAsset{asset}}
+			release := releaseInfo{TagName: "v0.2.2", Assets: []releaseAsset{asset}}
 			if test.change != nil {
 				test.change(&release)
 			}
@@ -42,7 +43,7 @@ func TestSelectUpdate(t *testing.T) {
 			if (got != nil) != test.want || (err != nil) != test.wantError {
 				t.Fatalf("selectUpdate() = %v, %q, %v", got, version, err)
 			}
-			if test.want && version != "0.2.0" {
+			if test.want && version != "0.2.2" {
 				t.Fatalf("unexpected version: %q", version)
 			}
 		})

@@ -100,10 +100,11 @@ las pruebas de ejecución en Windows. Para Linux hacen falta sus bibliotecas nat
 Windows ARM64 no está cubierto por el instalador automático de mpv.
 El workflow de [distribución](packaging.md#windows) compila y prueba en Windows
 amd64 y publica un instalador NSIS por usuario en Releases por cada etiqueta
-`vX.Y.Z`. El instalador de `v0.1.0` era para todo el equipo y no incluía un
-actualizador: desinstálalo e instala una vez la versión `v0.2.0` o posterior
-desde Releases. Desde entonces, la aplicación descarga las nuevas versiones
-verificadas y las instala en silencio al cerrarse, antes de abrirse de nuevo.
+`vX.Y.Z`. El instalador de `v0.1.0` era para todo el equipo: desinstálalo e
+instala `v0.2.1` por usuario. Si tienes `v0.2.0`, instala `v0.2.1` manualmente
+desde Releases para sustituir su actualizador sin confirmación. Desde `v0.2.1`,
+la aplicación solo consulta si hay nuevas versiones; pregunta antes de
+descargar, instalar y reiniciar. «Ahora no» pospone el aviso hasta otro inicio.
 Las compilaciones locales sin versión de release no se actualizan solas.
 
 ### Cómo se obtiene mpv

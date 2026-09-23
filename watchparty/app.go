@@ -65,17 +65,21 @@ type App struct {
 	roomCancel context.CancelFunc
 	syncCancel context.CancelFunc
 
-	signalerURL   string
-	isHost        bool
-	streamURL     string
-	currentRoom   string
-	lastSession   Session
-	lastState     PlaybackState
-	playerClosed  bool
-	launching     bool
-	restoring     bool
-	updatePending *pendingUpdate
-	updateCancel  context.CancelFunc
+	signalerURL       string
+	isHost            bool
+	streamURL         string
+	currentRoom       string
+	lastSession       Session
+	lastState         PlaybackState
+	playerClosed      bool
+	launching         bool
+	restoring         bool
+	updatePending     *pendingUpdate
+	updateAvailable   *availableUpdate
+	updateDismissed   string
+	updateDownloading bool
+	updateCtx         context.Context
+	updateCancel      context.CancelFunc
 }
 
 // NewApp creates a new App application struct.
@@ -112,15 +116,28 @@ func (a *App) startup(ctx context.Context) {
 // GetUpdateStatus lets the UI recover an update notification sent before it loaded.
 func (a *App) GetUpdateStatus() UpdateStatus {
 	a.mu.Lock()
-	pending := a.updatePending
+	available, dismissed, downloading := a.updateAvailable, a.updateDismissed, a.updateDownloading
 	a.mu.Unlock()
 	status := UpdateStatus{Error: consumeUpdateError()}
-	if pending == nil {
-		return status
+	if available != nil && !downloading && dismissed != available.Version {
+		status.Available = true
+		status.Version = available.Version
 	}
-	status.Ready = true
-	status.Version = pending.Version
 	return status
+}
+
+// DismissUpdate postpones this version's prompt until the next app launch.
+func (a *App) DismissUpdate() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.updateAvailable != nil {
+		a.updateDismissed = a.updateAvailable.Version
+	}
+}
+
+// InstallUpdate is called only after the user explicitly chooses to update.
+func (a *App) InstallUpdate() error {
+	return a.downloadAvailableUpdate()
 }
 
 func (a *App) shutdown(_ context.Context) {

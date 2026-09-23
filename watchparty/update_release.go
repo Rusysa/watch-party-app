@@ -26,9 +26,14 @@ const (
 )
 
 type UpdateStatus struct {
-	Ready   bool   `json:"ready"`
-	Version string `json:"version"`
-	Error   string `json:"error"`
+	Available bool   `json:"available"`
+	Version   string `json:"version"`
+	Error     string `json:"error"`
+}
+
+type availableUpdate struct {
+	Version string
+	Asset   releaseAsset
 }
 
 type pendingUpdate struct {
@@ -76,7 +81,9 @@ func selectUpdate(release releaseInfo, current string) (*releaseAsset, string, e
 	if release.Draft || release.Prerelease || !strings.HasPrefix(release.TagName, "v") || !newerVersion(current, version) {
 		return nil, "", nil
 	}
-	name := "watchparty-" + version + "-windows-amd64-installer.exe"
+	// A distinct asset name keeps v0.2.0's unprompted updater from finding
+	// these releases. Migrating from that version requires a manual install.
+	name := "watchparty-" + version + "-windows-amd64-consent-installer.exe"
 	for _, asset := range release.Assets {
 		if asset.Name != name {
 			continue

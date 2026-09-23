@@ -4,8 +4,9 @@
 import { CreateRoom, JoinRoom, LeaveRoom, Play, Pause, Seek,
          GetPlaybackState, GetRoomState, TransferControl,
          SetSignalerURL, GetSignalerURL, CheckAndInstallMPV, SetStreamURL,
-         GetLastRoom, ForgetLastRoom, ReopenPlayer, GetUpdateStatus } from '../wailsjs/go/main/App.js';
-import { EventsOn } from '../wailsjs/runtime/runtime.js';
+         GetLastRoom, ForgetLastRoom, ReopenPlayer, GetUpdateStatus,
+         DismissUpdate, InstallUpdate } from '../wailsjs/go/main/App.js';
+import { EventsOn, Quit } from '../wailsjs/runtime/runtime.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
@@ -78,11 +79,11 @@ function toast(message, type = 'info', duration = 4000) {
 }
 
 function showUpdateStatus(update) {
-  if (!update?.ready) return;
+  if (!update?.available) return;
   const banner = $('#update-status');
   if (!banner) return;
-  banner.textContent = `Versión ${update.version} descargada. Cierra Watch Party para instalarla automáticamente y volver a abrir la aplicación.`;
-  banner.style.display = 'block';
+  $('#update-message').textContent = `Nueva versión ${update.version} disponible. ¿Quieres instalarla ahora?`;
+  banner.style.display = 'flex';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,9 +254,8 @@ function enterRoom(roomId, isHost, streamUrl) {
 // Wails event listeners
 // ─────────────────────────────────────────────────────────────────────────────
 function setupEvents() {
-	EventsOn('update:ready', update => {
+	EventsOn('update:available', update => {
 	  showUpdateStatus(update);
-	  toast(`Nueva versión ${update.version} lista; se instalará al cerrar la aplicación`, 'success', 8000);
 	});
 	EventsOn('room:state', (room) => {
 	  state.isHost = room.isHost;
@@ -370,7 +370,11 @@ function buildUI() {
   app.innerHTML = `
     <!-- Toast container -->
     <div class="toast-container" id="toast-container"></div>
-    <div id="update-status" role="status" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:#1b4332;color:#fff;padding:10px 20px;text-align:center;font-size:13px;"></div>
+    <div id="update-status" role="status" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:#1b4332;color:#fff;padding:10px 20px;align-items:center;justify-content:center;gap:12px;font-size:13px;">
+      <span id="update-message"></span>
+      <button class="btn btn-primary" id="btn-install-update" style="width:auto;padding:6px 12px;">Instalar ahora</button>
+      <button class="btn btn-secondary" id="btn-dismiss-update" style="width:auto;padding:6px 12px;">Ahora no</button>
+    </div>
 
     <!-- ══════════════════ LANDING VIEW ══════════════════ -->
     <div class="view active" id="view-landing">
@@ -579,6 +583,30 @@ function buildUI() {
 // ─────────────────────────────────────────────────────────────────────────────
 function wireHandlers() {
   refreshLastRoom();
+  $('#btn-install-update').addEventListener('click', async () => {
+    const button = $('#btn-install-update');
+    const later = $('#btn-dismiss-update');
+    const message = $('#update-message');
+    button.disabled = true;
+    later.disabled = true;
+    message.textContent = 'Descargando y verificando la actualización...';
+    try {
+      await InstallUpdate();
+      message.textContent = 'Descarga verificada. Cerrando para instalar y reiniciar...';
+      Quit();
+    } catch (err) {
+      message.textContent = 'No se pudo descargar la actualización. Puedes volver a intentarlo.';
+      button.disabled = false;
+      later.disabled = false;
+      toast(`Error al actualizar: ${err}`, 'error', 8000);
+    }
+  });
+  $('#btn-dismiss-update').addEventListener('click', async () => {
+    try {
+      await DismissUpdate();
+      $('#update-status').style.display = 'none';
+    } catch (err) { toast(`Error: ${err}`, 'error'); }
+  });
   $('#btn-reopen-player').addEventListener('click', async () => {
     try { await ReopenPlayer(); state.playerClosed = false; updateRoomUI(); toast('Reproductor abierto; sincronizando...', 'success'); }
     catch (err) { toast(`No se pudo reabrir: ${err}`, 'error'); }

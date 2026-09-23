@@ -147,7 +147,7 @@ jobs:
       - name: Stage installer
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item 'watchparty/build/bin/watchparty-amd64-installer.exe' "release/watchparty-$env:VERSION-windows-amd64-installer.exe"
+          Copy-Item 'watchparty/build/bin/watchparty-amd64-installer.exe' "release/watchparty-$env:VERSION-windows-amd64-consent-installer.exe"
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:

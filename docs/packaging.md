@@ -43,12 +43,15 @@ La compilación de CI genera el instalador por usuario en un runner Windows y lo
 ofrece como artefacto temporal en cada ejecución. Las etiquetas `vX.Y.Z` lo
 publican en [GitHub Releases](https://github.com/Rusysa/watch-party-app/releases).
 El instalador `v0.1.0` era para todo el equipo: desinstálalo antes de instalar
-`v0.2.0` o posterior por usuario. Solo hace falta esa migración manual. Después,
-al iniciar y cada seis horas, la aplicación consulta la última release estable,
-descarga el instalador con SHA-256 verificado y avisa cuando está listo. Al
-cerrar la ventana espera a que termine el proceso, instala la actualización
-en silencio en el mismo directorio y vuelve a abrir Watch Party. Las versiones
-locales de desarrollo y los ejecutables portátiles no se actualizan solos.
+`v0.2.1` por usuario. Si ya instalaste `v0.2.0`, instala `v0.2.1` manualmente:
+su actualizador anterior no solicitaba confirmación, por lo que las releases
+interactivas usan un nombre de instalador diferente que esa versión no puede
+descargar. Después, al iniciar y cada seis horas, la aplicación consulta la
+última release estable **sin descargar nada**. Muestra «Instalar ahora» y «Ahora
+no»; solo tras elegir «Instalar ahora» descarga el instalador, verifica su
+SHA-256, cierra la aplicación, instala en el mismo directorio y la reinicia.
+«Ahora no» pospone el aviso hasta el siguiente inicio. Las compilaciones locales
+de desarrollo y los ejecutables portátiles no se actualizan solos.
 
 ## Linux
 

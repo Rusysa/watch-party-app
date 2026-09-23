@@ -78,6 +78,7 @@ func (a *App) startAutoUpdater(ctx context.Context) {
 	}
 	updateCtx, cancel := context.WithCancel(ctx)
 	a.mu.Lock()
+	a.updateCtx = updateCtx
 	a.updateCancel = cancel
 	a.mu.Unlock()
 	go func() {
@@ -87,7 +88,7 @@ func (a *App) startAutoUpdater(ctx context.Context) {
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
 		for {
-			if err := a.stageLatestUpdate(updateCtx); err != nil && updateCtx.Err() == nil {
+			if err := a.checkLatestUpdate(updateCtx); err != nil && updateCtx.Err() == nil {
 				log.Printf("automatic update: %v", err)
 			}
 			select {
@@ -99,19 +100,61 @@ func (a *App) startAutoUpdater(ctx context.Context) {
 	}()
 }
 
-func (a *App) stageLatestUpdate(ctx context.Context) error {
+func (a *App) checkLatestUpdate(ctx context.Context) error {
 	a.mu.Lock()
-	ready := a.updatePending != nil
+	busy := a.updatePending != nil || a.updateDownloading
 	a.mu.Unlock()
-	if ready {
+	if busy {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	asset, version, err := latestUpdate(ctx, &http.Client{Timeout: 20 * time.Second}, appVersion)
-	if err != nil || asset == nil {
+	if err != nil {
 		return err
 	}
+	a.mu.Lock()
+	if ctx.Err() != nil || a.updatePending != nil || a.updateDownloading {
+		a.mu.Unlock()
+		return ctx.Err()
+	}
+	if asset == nil {
+		a.updateAvailable = nil
+		a.mu.Unlock()
+		return nil
+	}
+	previous := a.updateAvailable
+	a.updateAvailable = &availableUpdate{Version: version, Asset: *asset}
+	notify := (previous == nil || previous.Version != version) && a.updateDismissed != version
+	a.mu.Unlock()
+	if notify {
+		runtime.EventsEmit(a.ctx, "update:available", UpdateStatus{Available: true, Version: version})
+	}
+	return nil
+}
+
+// No installer is downloaded until the user chooses "Install now" in the UI.
+func (a *App) downloadAvailableUpdate() error {
+	a.mu.Lock()
+	if a.updatePending != nil {
+		a.mu.Unlock()
+		return nil // Already downloaded after a previous confirmation.
+	}
+	if a.updateAvailable == nil || a.updateDownloading || a.updateCtx == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("no update available for installation")
+	}
+	available := *a.updateAvailable
+	ctx := a.updateCtx
+	a.updateDownloading = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.updateDownloading = false
+		a.mu.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	dir, err := updateCacheDir()
 	if err != nil {
 		return err
@@ -123,7 +166,7 @@ func (a *App) stageLatestUpdate(ctx context.Context) error {
 		}
 		return nil
 	}}
-	path, err := downloadUpdate(ctx, client, *asset, dir)
+	path, err := downloadUpdate(ctx, client, available.Asset, dir)
 	if err != nil {
 		return err
 	}
@@ -133,9 +176,8 @@ func (a *App) stageLatestUpdate(ctx context.Context) error {
 		os.Remove(path)
 		return ctx.Err()
 	}
-	a.updatePending = &pendingUpdate{Version: version, Path: path, Digest: asset.Digest}
+	a.updatePending = &pendingUpdate{Version: available.Version, Path: path, Digest: available.Asset.Digest}
 	a.mu.Unlock()
-	runtime.EventsEmit(a.ctx, "update:ready", UpdateStatus{Ready: true, Version: version})
 	return nil
 }
 
