@@ -31,7 +31,11 @@ jobs:
         run: go test -race ./...
       - name: Include Go module notices
         working-directory: watchparty
-        run: go list -deps -json . | python3 ../scripts/collect-licenses.py
+        shell: bash
+        run: |
+          set -o pipefail
+          go list -buildvcs=false -deps -json . | python3 ../scripts/collect-licenses.py
+          test -s build/bin/third-party/INDEX.md
       - name: Build and inspect RPM
         shell: bash
         run: |
@@ -62,6 +66,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: watchparty/go.mod
+          cache-dependency-path: watchparty/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: 24
