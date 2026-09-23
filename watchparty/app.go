@@ -65,15 +65,17 @@ type App struct {
 	roomCancel context.CancelFunc
 	syncCancel context.CancelFunc
 
-	signalerURL  string
-	isHost       bool
-	streamURL    string
-	currentRoom  string
-	lastSession  Session
-	lastState    PlaybackState
-	playerClosed bool
-	launching    bool
-	restoring    bool
+	signalerURL   string
+	isHost        bool
+	streamURL     string
+	currentRoom   string
+	lastSession   Session
+	lastState     PlaybackState
+	playerClosed  bool
+	launching     bool
+	restoring     bool
+	updatePending *pendingUpdate
+	updateCancel  context.CancelFunc
 }
 
 // NewApp creates a new App application struct.
@@ -96,6 +98,7 @@ func NewApp() *App {
 // startup is called when the app starts. The context is saved so we can call runtime methods.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startAutoUpdater(ctx)
 	// Start the prerequisite check as soon as Wails is ready. The frontend also
 	// awaits this operation so it can show progress; Manager serializes both
 	// calls and performs at most one installation.
@@ -104,6 +107,25 @@ func (a *App) startup(ctx context.Context) {
 			log.Printf("mpv prerequisite check: %v", err)
 		}
 	}()
+}
+
+// GetUpdateStatus lets the UI recover an update notification sent before it loaded.
+func (a *App) GetUpdateStatus() UpdateStatus {
+	a.mu.Lock()
+	pending := a.updatePending
+	a.mu.Unlock()
+	status := UpdateStatus{Error: consumeUpdateError()}
+	if pending == nil {
+		return status
+	}
+	status.Ready = true
+	status.Version = pending.Version
+	return status
+}
+
+func (a *App) shutdown(_ context.Context) {
+	a.leaveRoomInternal()
+	a.finishAutoUpdate()
 }
 
 // CheckAndInstallMPV checks if mpv is installed, and if not, downloads it.

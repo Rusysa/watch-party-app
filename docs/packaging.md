@@ -30,7 +30,7 @@ Con NSIS instalado y en `PATH`, genera los avisos antes de compilar. Desde
 ```powershell
 wails build -clean -platform windows/amd64
 go list -deps -json . | python ../scripts/collect-licenses.py build/windows/installer/tmp/third-party
-wails build -s -m -platform windows/amd64 -nsis
+wails build -s -m -platform windows/amd64 -nsis -installscope user
 ```
 
 El ejecutable se llama `build/bin/watchparty.exe`; los artefactos del instalador
@@ -39,11 +39,16 @@ Windows antes de distribuir. WebView2 Runtime sigue siendo necesario; el
 instalador de Wails incorpora su bootstrapper. Incluye `LICENSE`, créditos y
 avisos de las dependencias Go en `licenses/`.
 
-La compilación de CI genera el instalador en un runner Windows y lo ofrece como
-artefacto temporal en cada ejecución. Las etiquetas `vX.Y.Z` lo publican en
-[GitHub Releases](https://github.com/Rusysa/watch-party-app/releases).
-Para actualizar una instalación Windows, descarga y ejecuta el instalador de la
-nueva versión. La aplicación no instala actualizaciones automáticamente.
+La compilación de CI genera el instalador por usuario en un runner Windows y lo
+ofrece como artefacto temporal en cada ejecución. Las etiquetas `vX.Y.Z` lo
+publican en [GitHub Releases](https://github.com/Rusysa/watch-party-app/releases).
+El instalador `v0.1.0` era para todo el equipo: desinstálalo antes de instalar
+`v0.2.0` o posterior por usuario. Solo hace falta esa migración manual. Después,
+al iniciar y cada seis horas, la aplicación consulta la última release estable,
+descarga el instalador con SHA-256 verificado y avisa cuando está listo. Al
+cerrar la ventana espera a que termine el proceso, instala la actualización
+en silencio en el mismo directorio y vuelve a abrir Watch Party. Las versiones
+locales de desarrollo y los ejecutables portátiles no se actualizan solos.
 
 ## Linux
 

@@ -81,9 +81,15 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 !else
   InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
 !endif # Default installing folder ($PROGRAMFILES is Program Files folder).
+!ifdef WAILS_INSTALL_SCOPE
+  !if "${WAILS_INSTALL_SCOPE}" == "user"
+    InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation"
+  !endif
+!endif
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
+   SetRegView 64
    !insertmacro wails.checkArchitecture
 FunctionEnd
 
@@ -109,6 +115,11 @@ Section
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+    !ifdef WAILS_INSTALL_SCOPE
+      !if "${WAILS_INSTALL_SCOPE}" == "user"
+        WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+      !endif
+    !endif
 SectionEnd
 
 Section "uninstall"

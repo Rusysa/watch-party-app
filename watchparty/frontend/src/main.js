@@ -4,7 +4,7 @@
 import { CreateRoom, JoinRoom, LeaveRoom, Play, Pause, Seek,
          GetPlaybackState, GetRoomState, TransferControl,
          SetSignalerURL, GetSignalerURL, CheckAndInstallMPV, SetStreamURL,
-         GetLastRoom, ForgetLastRoom, ReopenPlayer } from '../wailsjs/go/main/App.js';
+         GetLastRoom, ForgetLastRoom, ReopenPlayer, GetUpdateStatus } from '../wailsjs/go/main/App.js';
 import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +75,14 @@ function toast(message, type = 'info', duration = 4000) {
   el.appendChild(msgSpan);
   container.appendChild(el);
   setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(20px)'; el.style.transition = 'all 0.3s'; setTimeout(() => el.remove(), 300); }, duration);
+}
+
+function showUpdateStatus(update) {
+  if (!update?.ready) return;
+  const banner = $('#update-status');
+  if (!banner) return;
+  banner.textContent = `Versión ${update.version} descargada. Cierra Watch Party para instalarla automáticamente y volver a abrir la aplicación.`;
+  banner.style.display = 'block';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,6 +253,10 @@ function enterRoom(roomId, isHost, streamUrl) {
 // Wails event listeners
 // ─────────────────────────────────────────────────────────────────────────────
 function setupEvents() {
+	EventsOn('update:ready', update => {
+	  showUpdateStatus(update);
+	  toast(`Nueva versión ${update.version} lista; se instalará al cerrar la aplicación`, 'success', 8000);
+	});
 	EventsOn('room:state', (room) => {
 	  state.isHost = room.isHost;
 	  state.peers = room.peers || [];
@@ -358,6 +370,7 @@ function buildUI() {
   app.innerHTML = `
     <!-- Toast container -->
     <div class="toast-container" id="toast-container"></div>
+    <div id="update-status" role="status" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:#1b4332;color:#fff;padding:10px 20px;text-align:center;font-size:13px;"></div>
 
     <!-- ══════════════════ LANDING VIEW ══════════════════ -->
     <div class="view active" id="view-landing">
@@ -717,6 +730,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   buildUI();
   wireHandlers();
   setupEvents();
+  GetUpdateStatus().then(update => {
+    showUpdateStatus(update);
+    if (update?.error) toast(`No se pudo instalar la actualización: ${update.error}`, 'error', 10000);
+  }).catch(() => {});
   
   // Setup installer events
   EventsOn('installer:progress', (status) => {

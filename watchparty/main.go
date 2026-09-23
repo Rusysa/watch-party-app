@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -14,6 +14,9 @@ import (
 var assets embed.FS
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--watchparty-update-helper" {
+		os.Exit(applyUpdate(os.Args[2:]))
+	}
 	app := NewApp()
 
 	err := wails.Run(&options.App{
@@ -29,7 +32,7 @@ func main() {
 			Assets: assets,
 		},
 		OnStartup:  app.startup,
-		OnShutdown: func(_ context.Context) { app.leaveRoomInternal() },
+		OnShutdown: app.shutdown,
 		Bind: []interface{}{
 			app,
 		},
