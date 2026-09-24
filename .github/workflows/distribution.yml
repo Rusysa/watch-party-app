@@ -173,12 +173,6 @@ jobs:
           pattern: release-*
           path: release
           merge-multiple: true
-      - name: Package checksums and credits
-        run: |
-          cp LICENSE release/LICENSE
-          cp docs/credits.md release/CREDITS.md
-          cd release
-          sha256sum *.rpm *.exe > SHA256SUMS
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

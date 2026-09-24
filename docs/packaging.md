@@ -73,8 +73,8 @@ Releases e instalan de la misma manera; aún no hay repositorio DNF.
 
 `.github/workflows/distribution.yml` comprueba Fedora 44 y Windows amd64. Al
 subir una etiqueta `vX.Y.Z`, espera a que ambas compilaciones terminen y publica
-en una única GitHub Release el RPM, el instalador Windows, sus sumas SHA-256,
-`LICENSE` y `CREDITS.md`.
+en una única GitHub Release únicamente el RPM y el instalador Windows.
+La licencia y los créditos permanecen en el repositorio y dentro de ambos paquetes.
 `LICENSE` contiene la licencia propia MIT; `license.spdx` la identifica y
 `rpm-license.spdx` enumera las licencias del código enlazado en el RPM.
 La receta exige la licencia y los avisos de Go.
